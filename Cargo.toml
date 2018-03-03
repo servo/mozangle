@@ -1,7 +1,8 @@
 [package]
 name = "mozangle"
 version = "0.1.0"
-authors = ["The Servo Project Developers"]
+authors = ["The ANGLE Project Authors"]
+license = " BSD-3-Clause"
 
 [lib]
 path = "lib.rs"
