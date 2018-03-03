@@ -58,6 +58,7 @@ def write(data, f):
         b"     pub sources: &'static [&'static str],\n"
         b"     pub includes: &'static [&'static str],\n"
         b"     pub defines: &'static [(&'static str, Option<&'static str>)],\n"
+        b"     pub os_libs: &'static [&'static str],\n"
         b"}\n"
         b"\n"
     )
@@ -77,6 +78,7 @@ def write_lib(name, data, f):
     write_list(b"sources", map(string_literal, data["SOURCES"]), f)
     write_list(b"includes", map(string_literal, data["LOCAL_INCLUDES"]), f)
     write_list(b"defines", defines, f)
+    write_list(b"os_libs", map(string_literal, data["OS_LIBS"]), f)
     f.write(b"};\n")
 
 def string_literal(s):

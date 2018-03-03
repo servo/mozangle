@@ -5,6 +5,7 @@ pub struct Data {
      pub sources: &'static [&'static str],
      pub includes: &'static [&'static str],
      pub defines: &'static [(&'static str, Option<&'static str>)],
+     pub os_libs: &'static [&'static str],
 }
 
 pub const TRANSLATOR: Data = Data {
@@ -175,6 +176,8 @@ pub const TRANSLATOR: Data = Data {
         ("_UNICODE", None),
         ("__NDK_FPABI__", Some("")),
         ("constexpr14", Some("")),
+    ],
+    os_libs: &[
     ],
 };
 pub const EGL: Data = Data {
@@ -516,5 +519,33 @@ pub const EGL: Data = Data {
         ("_UNICODE", None),
         ("__NDK_FPABI__", Some("")),
         ("constexpr14", Some("")),
+    ],
+    os_libs: &[
+        "advapi32",
+        "comdlg32",
+        "d3d9",
+        "dbghelp",
+        "delayimp",
+        "dnsapi",
+        "dxguid",
+        "gdi32",
+        "kernel32",
+        "msimg32",
+        "odbc32",
+        "odbccp32",
+        "ole32",
+        "oleaut32",
+        "psapi",
+        "setupapi",
+        "shell32",
+        "shlwapi",
+        "user32",
+        "usp10",
+        "uuid",
+        "version",
+        "wininet",
+        "winmm",
+        "winspool",
+        "ws2_32",
     ],
 };

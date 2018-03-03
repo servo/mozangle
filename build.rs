@@ -1,4 +1,5 @@
 extern crate cc;
+#[cfg(feature = "egl")] extern crate gl_generator;
 
 use std::env;
 use std::path::PathBuf;
@@ -6,6 +7,11 @@ use std::path::PathBuf;
 mod build_data;
 
 fn main() {
+    build_angle();
+    generate_bindings();
+}
+
+fn build_angle() {
     let egl = env::var("CARGO_FEATURE_EGL").is_ok();
     let target = env::var("TARGET").unwrap();
     if egl && !target.contains("windows") {
@@ -53,6 +59,9 @@ fn main() {
         .flag_if_supported("-arch:SSE2")  // MSVC
         .compile("angle");
 
+    for lib in data.os_libs {
+        println!("cargo:rustc-link-lib={}", lib);
+    }
     println!("cargo:rerun-if-changed=src/shaders/glslang-c.cpp");
     println!("cargo:rerun-if-changed=gfx");
 }
@@ -61,4 +70,29 @@ fn fixup_path(path: &str) -> String {
     let prefix = "../../";
     assert!(path.starts_with(prefix));
     format!("gfx/angle/{}", &path[prefix.len()..])
+}
+
+#[cfg(not(feature = "egl"))]
+fn generate_bindings() {}
+
+#[cfg(feature = "egl")]
+fn generate_bindings() {
+    use gl_generator::{Registry, Api, Profile, Fallbacks};
+    use std::fs::File;
+
+    let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
+
+    let mut file = File::create(&out_dir.join("egl_bindings.rs")).unwrap();
+    Registry::new(Api::Egl, (1, 5), Profile::Core, Fallbacks::All, [
+        "EGL_ANGLE_device_d3d",
+        "EGL_EXT_platform_base",
+        "EGL_EXT_platform_device",
+    ])
+        .write_bindings(gl_generator::StaticGenerator, &mut file)
+        .unwrap();
+
+    let mut file = File::create(&out_dir.join("gles_bindings.rs")).unwrap();
+    Registry::new(Api::Gles2, (2, 0), Profile::Core, Fallbacks::None, [])
+        .write_bindings(gl_generator::StaticGenerator, &mut file)
+        .unwrap();
 }

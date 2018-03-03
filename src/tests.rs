@@ -13,6 +13,13 @@ fn test_linkage() {
     init();
 }
 
+#[cfg(feature = "egl")]
+#[test]
+fn test_egl_linkage() {
+    use egl::ffi;
+    assert_eq!(unsafe { ffi::GetError() } as u32, ffi::SUCCESS);
+}
+
 #[test]
 fn test_translation_complex() {
     init();
