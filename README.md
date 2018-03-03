@@ -29,7 +29,7 @@ Mozilla’s fork of Google ANGLE, repackaged as a Rust crate.
 Feature flags
 -------------
 
-By default, this crate only compiles the shader compiler.
+By default, this crate only compiles the shader translator.
 This should be cross-platform, and can be used with:
 
 ```toml
