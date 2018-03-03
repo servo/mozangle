@@ -46,9 +46,14 @@ fn main() {
 
     build
         .files(data.sources)
+        .file("../../../../src/shaders/glslang-c.cpp")
         .cpp(true)
         .warnings(false)
         .flag_if_supported("-msse2")  // GNU
         .flag_if_supported("-arch:SSE2")  // MSVC
         .compile("angle");
+
+    println!("cargo:rerun-if-changed=build_data.rs");
+    println!("cargo:rerun-if-changed=src/shaders/glslang-c.cpp");
+    println!("cargo:rerun-if-changed=gfx");
 }

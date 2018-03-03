@@ -1,11 +1,11 @@
 [package]
 name = "mozangle"
 version = "0.1.0"
-authors = ["The ANGLE Project Authors"]
+authors = ["The ANGLE Project Authors", "The Servo Project Developers"]
 license = " BSD-3-Clause"
 
-[lib]
-path = "lib.rs"
+[dependencies]
+lazy_static = "1.0"
 
 [build-dependencies]
 cc = { version = "1.0", features = ["parallel"] }
