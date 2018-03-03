@@ -1,0 +1,9 @@
+[package]
+name = "mozangle"
+version = "0.1.0"
+authors = ["The Servo Project Developers"]
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
