@@ -8,7 +8,7 @@ Mozilla’s fork of Google ANGLE, repackaged as a Rust crate.
 
 * [mozilla/angle] on GitHub is a fork with some Gecko-specific patches.
 
-* [`gfx/angle`] is generated from that.
+* [`gfx/angle`] in mozilla-central is generated from that.
   [`update-angle.py`] runs `gn desc` to extract information from the official build system,
   copies relevant source files,
   and creates `moz.build` files for Gecko’s build system.
