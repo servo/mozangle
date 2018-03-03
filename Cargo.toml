@@ -8,7 +8,8 @@ license = " BSD-3-Clause"
 lazy_static = "1.0"
 
 [build-dependencies]
-cc = { version = "1.0", features = ["parallel"] }
+cc = { version = "1.0", features = ["parallel"], git = "https://github.com/SimonSapin/cc-rs", branch = "arg-file" }
+gl_generator = "0.9.0"
 
 [features]
 egl = []  # Only supported on Windows
