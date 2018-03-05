@@ -34,7 +34,7 @@ This should be cross-platform, and can be used with:
 
 ```toml
 [dependencies]
-mozangle = {git = "https://github.com/servo/mozangle"}
+mozangle = "0.1"
 ```
 
 The `egl` Cargo feature enables the EGL and OpenGL ES implementations.
@@ -42,7 +42,7 @@ This is only supported on Windows, since the Direct3D 11 rendering backend is co
 
 ```toml
 [target.'cfg(windows)'.dependencies]
-mozangle = {git = "https://github.com/servo/mozangle", features = ["egl"]}
+mozangle = { version = "0.1", features = ["egl"] }
 ```
 
 

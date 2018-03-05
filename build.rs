@@ -15,7 +15,14 @@ fn build_angle() {
     let egl = env::var("CARGO_FEATURE_EGL").is_ok();
     let target = env::var("TARGET").unwrap();
     if egl && !target.contains("windows") {
+        println!("");
         println!("The `egl` feature is only supported on Windows.");
+        println!("");
+        println!("Consider specifying your dependency like this:");
+        println!("");
+        println!("[target.'cfg(windows)'.dependencies]");
+        println!("mozangle = {{ version = \"0.1\" , features = [\"egl\"] }}");
+        println!("");
         std::process::exit(1)
     }
 
