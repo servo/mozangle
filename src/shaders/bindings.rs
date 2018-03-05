@@ -45,6 +45,49 @@ pub enum ShShaderOutput {
     SH_HLSL_4_0_FL9_3_OUTPUT = 35658,
     SH_GLSL_VULKAN_OUTPUT = 35659,
 }
+pub const SH_VALIDATE: ShCompileOptions = 0;
+pub const SH_VALIDATE_LOOP_INDEXING: ShCompileOptions = 1;
+pub const SH_INTERMEDIATE_TREE: ShCompileOptions = 2;
+pub const SH_OBJECT_CODE: ShCompileOptions = 4;
+pub const SH_VARIABLES: ShCompileOptions = 8;
+pub const SH_LINE_DIRECTIVES: ShCompileOptions = 16;
+pub const SH_SOURCE_PATH: ShCompileOptions = 32;
+pub const SH_DONT_REMOVE_INVARIANT_FOR_FRAGMENT_INPUT: ShCompileOptions = 64;
+pub const SH_REMOVE_INVARIANT_AND_CENTROID_FOR_ESSL3: ShCompileOptions = 128;
+pub const SH_EMULATE_ABS_INT_FUNCTION: ShCompileOptions = 256;
+pub const SH_ENFORCE_PACKING_RESTRICTIONS: ShCompileOptions = 512;
+pub const SH_CLAMP_INDIRECT_ARRAY_BOUNDS: ShCompileOptions = 1024;
+pub const SH_LIMIT_EXPRESSION_COMPLEXITY: ShCompileOptions = 2048;
+pub const SH_LIMIT_CALL_STACK_DEPTH: ShCompileOptions = 4096;
+pub const SH_INIT_GL_POSITION: ShCompileOptions = 8192;
+pub const SH_UNFOLD_SHORT_CIRCUIT: ShCompileOptions = 16384;
+pub const SH_INIT_OUTPUT_VARIABLES: ShCompileOptions = 32768;
+pub const SH_SCALARIZE_VEC_AND_MAT_CONSTRUCTOR_ARGS: ShCompileOptions = 65536;
+pub const SH_REGENERATE_STRUCT_NAMES: ShCompileOptions = 131072;
+pub const SH_DONT_PRUNE_UNUSED_FUNCTIONS: ShCompileOptions = 262144;
+pub const SH_REMOVE_POW_WITH_CONSTANT_EXPONENT: ShCompileOptions = 524288;
+pub const SH_REWRITE_DO_WHILE_LOOPS: ShCompileOptions = 1048576;
+pub const SH_EXPAND_SELECT_HLSL_INTEGER_POW_EXPRESSIONS: ShCompileOptions = 2097152;
+pub const SH_FLATTEN_PRAGMA_STDGL_INVARIANT_ALL: ShCompileOptions = 4194304;
+pub const SH_HLSL_GET_DIMENSIONS_IGNORES_BASE_LEVEL: ShCompileOptions = 8388608;
+pub const SH_REWRITE_TEXELFETCHOFFSET_TO_TEXELFETCH: ShCompileOptions = 16777216;
+pub const SH_ADD_AND_TRUE_TO_LOOP_CONDITION: ShCompileOptions = 33554432;
+pub const SH_REWRITE_INTEGER_UNARY_MINUS_OPERATOR: ShCompileOptions = 67108864;
+pub const SH_EMULATE_ISNAN_FLOAT_FUNCTION: ShCompileOptions = 134217728;
+pub const SH_USE_UNUSED_STANDARD_SHARED_BLOCKS: ShCompileOptions = 268435456;
+pub const SH_REWRITE_FLOAT_UNARY_MINUS_OPERATOR: ShCompileOptions = 536870912;
+pub const SH_EMULATE_ATAN2_FLOAT_FUNCTION: ShCompileOptions = 1073741824;
+extern "C" {
+    #[link_name = "\u{1}_ZL34SH_INITIALIZE_UNINITIALIZED_LOCALS"]
+    pub static mut SH_INITIALIZE_UNINITIALIZED_LOCALS: ShCompileOptions;
+}
+pub const SH_INITIALIZE_BUILTINS_FOR_INSTANCED_MULTIVIEW: ShCompileOptions = 0;
+pub const SH_SELECT_VIEW_IN_NV_GLSL_VERTEX_SHADER: ShCompileOptions = 0;
+pub const SH_CLAMP_POINT_SIZE: ShCompileOptions = 0;
+pub const SH_REWRITE_VECTOR_SCALAR_ARITHMETIC: ShCompileOptions = 0;
+pub const SH_DONT_USE_LOOPS_TO_INITIALIZE_VARIABLES: ShCompileOptions = 0;
+pub const SH_SKIP_D3D_CONSTANT_REGISTER_ZERO: ShCompileOptions = 0;
+pub const SH_CLAMP_FRAG_DEPTH: ShCompileOptions = 0;
 #[repr(u32)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum ShArrayIndexClampingStrategy {
