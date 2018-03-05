@@ -4,6 +4,7 @@ bindgen \
     --opaque-type "std.*" \
     --whitelist-type "Sh.*" \
     --whitelist-type "SH.*" \
+    --rustified-enum "Sh.*" \
     -o bindings.rs \
     bindings.hpp \
     -- -I../../gfx/angle/checkout/include \
