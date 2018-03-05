@@ -6,5 +6,5 @@ bindgen \
     --whitelist-type "SH.*" \
     -o bindings.rs \
     bindings.hpp \
-    -- I../gfx/angle/checkout/include \
-    -- -std=c++11
+    -- -I../../gfx/angle/checkout/include \
+    -std=c++11
