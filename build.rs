@@ -62,6 +62,7 @@ fn build_angle() {
         .file("src/shaders/glslang-c.cpp")
         .cpp(true)
         .warnings(false)
+        .flag_if_supported("-std=gnu++11")
         .flag_if_supported("-msse2")  // GNU
         .flag_if_supported("-arch:SSE2")  // MSVC
         .compile("angle");
