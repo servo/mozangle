@@ -3,7 +3,7 @@
 #[allow(non_camel_case_types)]
 #[allow(non_snake_case)]
 pub mod ffi {
-    use std::os::raw::{c_char, c_int, c_uint};
+    use std::os::raw::{c_char, c_int, c_uint, c_void};
 
     include!("bindings.rs");
 
@@ -19,6 +19,11 @@ pub mod ffi {
         pub fn GLSLangGetShaderOutputType(handle: ShHandle) -> c_int;
         pub fn GLSLangGetObjectCode(handle: ShHandle) -> *const c_char;
         pub fn GLSLangGetInfoLog(handle: ShHandle) -> *const c_char;
+        pub fn GLSLangIterUniformNameMapping(
+            handle: ShHandle,
+            each: unsafe extern fn(*mut c_void, *const c_char, usize, *const c_char, usize),
+            closure_each: *mut c_void
+        );
     }
 }
 
@@ -26,10 +31,14 @@ use self::ffi::*;
 use self::ffi::ShShaderOutput::*;
 use self::ffi::ShShaderSpec::*;
 
+use std::collections::HashMap;
 use std::default;
 use std::ffi::CStr;
 use std::ffi::CString;
 use std::mem;
+use std::os::raw::c_void;
+use std::slice;
+use std::str;
 use std::sync::Mutex;
 use std::os::raw::c_char;
 
@@ -216,6 +225,7 @@ impl ShaderValidator {
 
     pub fn compile_and_translate(&self, strings: &[&str]) -> Result<String, &'static str> {
         let options = SH_VALIDATE | SH_OBJECT_CODE |
+                      SH_VARIABLES | // For uniform_name_map()
                       SH_EMULATE_ABS_INT_FUNCTION | // To workaround drivers
                       SH_EMULATE_ISNAN_FLOAT_FUNCTION | // To workaround drivers
                       SH_EMULATE_ATAN2_FLOAT_FUNCTION | // To workaround drivers
@@ -231,6 +241,52 @@ impl ShaderValidator {
 
         try!(self.compile(strings, options));
         Ok(self.object_code())
+    }
+
+    pub fn uniform_name_map(&self) -> HashMap<String, String> {
+        struct Closure {
+            map: HashMap<String, String>,
+            error: Option<str::Utf8Error>,
+        };
+
+        unsafe extern fn each_c(
+            closure: *mut c_void,
+            first: *const c_char, first_len: usize,
+            second: *const c_char, second_len: usize
+        ) {
+            // Safety: code in or called from this function must not panic.
+            // If it might and https://github.com/rust-lang/rust/issues/18510 is not fixed yet,
+            // use std::panic::catch_unwind.
+            let closure = closure as *mut Closure;
+            let closure = &mut *closure;
+            if closure.error.is_none() {
+                macro_rules! to_string {
+                    ($ptr: expr, $len: expr) => {
+                        match str::from_utf8(slice::from_raw_parts($ptr as *const u8, $len)) {
+                            Ok(s) => s.to_owned(),
+                            Err(e) => {
+                                closure.error = Some(e);
+                                return
+                            }
+                        }
+                    }
+                }
+                closure.map.insert(to_string!(first, first_len), to_string!(second, second_len));
+            }
+        }
+
+        let mut closure = Closure {
+            map: HashMap::new(),
+            error: None,
+        };
+        let closure_ptr: *mut Closure = &mut closure;
+        unsafe {
+            GLSLangIterUniformNameMapping(self.handle, each_c, closure_ptr as *mut c_void)
+        }
+        if let Some(err) = closure.error {
+            panic!("Non-UTF-8 uniform name in ANGLE shader: {}", err)
+        }
+        closure.map
     }
 }
 

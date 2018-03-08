@@ -78,3 +78,16 @@ extern "C"
 const char* GLSLangGetObjectCode(const ShHandle handle) {
     return sh::GetObjectCode(handle).c_str();
 }
+
+using StrPairFunction = void (*)(void *, const char *, size_t, const char *, size_t);
+
+extern "C"
+void GLSLangIterUniformNameMapping(const ShHandle handle, StrPairFunction each, void *closure_each) {
+    for (auto& uniform : *sh::GetUniforms(handle)) {
+        each(
+            closure_each,
+            uniform.name.data(), uniform.name.length(),
+            uniform.mappedName.data(), uniform.mappedName.length()
+        );
+    }
+}
