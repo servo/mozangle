@@ -243,6 +243,10 @@ impl ShaderValidator {
         Ok(self.object_code())
     }
 
+    /// Returns a map from uniform name in the original shader to uniform name
+    /// in the compiled shader.
+    ///
+    /// The map can be empty if the `SH_VARIABLES` option wasn't specified.
     pub fn uniform_name_map(&self) -> HashMap<String, String> {
         struct Closure {
             map: HashMap<String, String>,
