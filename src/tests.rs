@@ -38,6 +38,10 @@ void main() {
                                               &resources).unwrap();
 
     assert!(compiler.compile_and_translate(&[source]).is_ok());
+
+    let map = compiler.uniform_name_map();
+    let keys = map.keys().collect::<Vec<_>>();
+    assert_eq!(keys, &["uSampler"], "name hashing map: {:?}", map)
 }
 
 #[test]
