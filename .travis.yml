@@ -17,6 +17,7 @@ before_install:
 
 script:
   - cargo test --verbose
+  - cargo test --verbose --features egl  # Doesn’t do anything, but should still build
 
 notifications:
   webhooks: http://build.servo.org:54856/travis
