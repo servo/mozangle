@@ -30,18 +30,13 @@ Feature flags
 -------------
 
 By default, this crate only compiles the shader translator.
-This should be cross-platform, and can be used with:
+
+In Windows, the `egl` Cargo feature enables the EGL and OpenGL ES implementations.
+Although upstream ANGLE supports more platforms,
+this crate only configures the Direct3D 11 rendering backend.
 
 ```toml
 [dependencies]
-mozangle = "0.1"
-```
-
-The `egl` Cargo feature enables the EGL and OpenGL ES implementations.
-This is only supported on Windows, since the Direct3D 11 rendering backend is configured.
-
-```toml
-[target.'cfg(windows)'.dependencies]
 mozangle = { version = "0.1", features = ["egl"] }
 ```
 

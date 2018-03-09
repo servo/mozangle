@@ -12,19 +12,8 @@ fn main() {
 }
 
 fn build_angle() {
-    let egl = env::var("CARGO_FEATURE_EGL").is_ok();
     let target = env::var("TARGET").unwrap();
-    if egl && !target.contains("windows") {
-        println!("");
-        println!("The `egl` feature is only supported on Windows.");
-        println!("");
-        println!("Consider specifying your dependency like this:");
-        println!("");
-        println!("[target.'cfg(windows)'.dependencies]");
-        println!("mozangle = {{ version = \"0.1\" , features = [\"egl\"] }}");
-        println!("");
-        std::process::exit(1)
-    }
+    let egl = env::var("CARGO_FEATURE_EGL").is_ok() && target.contains("windows");
 
     let data = if egl { build_data::EGL } else { build_data::TRANSLATOR };
 
@@ -87,6 +76,11 @@ fn generate_bindings() {}
 fn generate_bindings() {
     use gl_generator::{Registry, Api, Profile, Fallbacks};
     use std::fs::File;
+
+    let target = env::var("TARGET").unwrap();
+    if !target.contains("windows") {
+        return
+    }
 
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
 

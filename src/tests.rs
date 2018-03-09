@@ -13,7 +13,7 @@ fn test_linkage() {
     init();
 }
 
-#[cfg(feature = "egl")]
+#[cfg(all(windows, feature = "egl"))]
 #[test]
 fn test_egl_linkage() {
     use egl::ffi;

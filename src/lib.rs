@@ -3,14 +3,14 @@
 pub mod shaders;
 #[cfg(test)] mod tests;
 
-#[cfg(feature = "egl")]
+#[cfg(all(windows, feature = "egl"))]
 pub mod gles {
     pub mod ffi {
         include!(concat!(env!("OUT_DIR"), "/gles_bindings.rs"));
     }
 }
 
-#[cfg(feature = "egl")]
+#[cfg(all(windows, feature = "egl"))]
 pub mod egl {
     use std::ffi::CString;
     use std::os::raw::c_void;
