@@ -89,6 +89,9 @@ fn generate_bindings() {
         "EGL_ANGLE_device_d3d",
         "EGL_EXT_platform_base",
         "EGL_EXT_platform_device",
+        "EGL_KHR_create_context",
+        "EGL_EXT_create_context_robustness",
+        "EGL_KHR_create_context_no_error",
     ])
         .write_bindings(gl_generator::StaticGenerator, &mut file)
         .unwrap();
