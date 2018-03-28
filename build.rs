@@ -1,3 +1,4 @@
+extern crate bindgen;
 extern crate cc;
 #[cfg(feature = "egl")] extern crate gl_generator;
 
@@ -7,8 +8,30 @@ use std::path::PathBuf;
 mod build_data;
 
 fn main() {
+    let repo = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
+    env::set_current_dir(&repo).unwrap();
+
     build_angle();
-    generate_bindings();
+    generate_angle_bindings();
+    generate_gl_bindings();
+}
+
+fn generate_angle_bindings() {
+    println!("cargo:rerun-if-changed=src/shaders/bindings.hpp");
+    let bindings = bindgen::builder()
+        .opaque_type("std.*")
+        .whitelist_type("Sh.*")
+        .whitelist_type("SH.*")
+        .whitelist_var("SH.*")
+        .rustified_enum("Sh.*")
+        .clang_arg("-std=c++11")
+        .clang_arg("-I")
+        .clang_arg("gfx/angle/checkout/include")
+        .header("src/shaders/bindings.hpp")
+        .generate()
+        .expect("Couldn't generate bindings");
+    let out = env::var("OUT_DIR").unwrap();
+    bindings.write_to_file(PathBuf::from(&out).join("bindings.rs")).unwrap();
 }
 
 fn build_angle() {
@@ -16,9 +39,6 @@ fn build_angle() {
     let egl = env::var("CARGO_FEATURE_EGL").is_ok() && target.contains("windows");
 
     let data = if egl { build_data::EGL } else { build_data::TRANSLATOR };
-
-    let repo = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
-    env::set_current_dir(repo).unwrap();
 
     // Change to one of the directory that contains moz.build
     let mut build = cc::Build::new();
@@ -70,10 +90,10 @@ fn fixup_path(path: &str) -> String {
 }
 
 #[cfg(not(feature = "egl"))]
-fn generate_bindings() {}
+fn generate_gl_bindings() {}
 
 #[cfg(feature = "egl")]
-fn generate_bindings() {
+fn generate_gl_bindings() {
     use gl_generator::{Registry, Api, Profile, Fallbacks};
     use std::fs::File;
 
