@@ -24,7 +24,7 @@ fn generate_angle_bindings() {
         .whitelist_type("SH.*")
         .whitelist_var("SH.*")
         .rustified_enum("Sh.*")
-        .clang_arg("-std=c++11")
+        .clang_arg("-std=c++14")
         .clang_arg("-I")
         .clang_arg("gfx/angle/checkout/include")
         .header("src/shaders/bindings.hpp")
