@@ -5,7 +5,7 @@
 pub mod ffi {
     use std::os::raw::{c_char, c_int, c_uint, c_void};
 
-    include!("bindings.rs");
+    include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
     extern {
         pub fn GLSLangInitialize() -> c_int;
