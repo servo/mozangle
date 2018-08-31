@@ -77,17 +77,14 @@ pub const SH_EMULATE_ISNAN_FLOAT_FUNCTION: ShCompileOptions = 134217728;
 pub const SH_USE_UNUSED_STANDARD_SHARED_BLOCKS: ShCompileOptions = 268435456;
 pub const SH_REWRITE_FLOAT_UNARY_MINUS_OPERATOR: ShCompileOptions = 536870912;
 pub const SH_EMULATE_ATAN2_FLOAT_FUNCTION: ShCompileOptions = 1073741824;
-extern "C" {
-    #[link_name = "\u{1}_ZL34SH_INITIALIZE_UNINITIALIZED_LOCALS"]
-    pub static mut SH_INITIALIZE_UNINITIALIZED_LOCALS: ShCompileOptions;
-}
-pub const SH_INITIALIZE_BUILTINS_FOR_INSTANCED_MULTIVIEW: ShCompileOptions = 0;
-pub const SH_SELECT_VIEW_IN_NV_GLSL_VERTEX_SHADER: ShCompileOptions = 0;
-pub const SH_CLAMP_POINT_SIZE: ShCompileOptions = 0;
-pub const SH_REWRITE_VECTOR_SCALAR_ARITHMETIC: ShCompileOptions = 0;
-pub const SH_DONT_USE_LOOPS_TO_INITIALIZE_VARIABLES: ShCompileOptions = 0;
-pub const SH_SKIP_D3D_CONSTANT_REGISTER_ZERO: ShCompileOptions = 0;
-pub const SH_CLAMP_FRAG_DEPTH: ShCompileOptions = 0;
+pub const SH_INITIALIZE_UNINITIALIZED_LOCALS: ShCompileOptions = 2147483648;
+pub const SH_INITIALIZE_BUILTINS_FOR_INSTANCED_MULTIVIEW: ShCompileOptions = 4294967296;
+pub const SH_SELECT_VIEW_IN_NV_GLSL_VERTEX_SHADER: ShCompileOptions = 8589934592;
+pub const SH_CLAMP_POINT_SIZE: ShCompileOptions = 17179869184;
+pub const SH_REWRITE_VECTOR_SCALAR_ARITHMETIC: ShCompileOptions = 34359738368;
+pub const SH_DONT_USE_LOOPS_TO_INITIALIZE_VARIABLES: ShCompileOptions = 68719476736;
+pub const SH_SKIP_D3D_CONSTANT_REGISTER_ZERO: ShCompileOptions = 137438953472;
+pub const SH_CLAMP_FRAG_DEPTH: ShCompileOptions = 274877906944;
 #[repr(u32)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum ShArrayIndexClampingStrategy {
