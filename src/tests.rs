@@ -13,12 +13,13 @@ fn test_linkage() {
     init();
 }
 
-#[cfg(all(windows, feature = "egl"))]
+// This test needs to perform dynamic linkage checks on the generated libEGL.dll.
+/*#[cfg(all(windows, feature = "egl"))]
 #[test]
 fn test_egl_linkage() {
     use egl::ffi;
     assert_eq!(unsafe { ffi::GetError() } as u32, ffi::SUCCESS);
-}
+}*/
 
 #[test]
 fn test_translation_complex() {
