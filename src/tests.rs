@@ -13,7 +13,7 @@ fn test_linkage() {
     init();
 }
 
-// This test needs to perform dynamic linkage checks on the generated libEGL.dll.
+// TODO(mozangle#16): This test needs to perform dynamic linkage checks on the generated libEGL.dll.
 /*#[cfg(all(windows, feature = "egl"))]
 #[test]
 fn test_egl_linkage() {
