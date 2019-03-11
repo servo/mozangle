@@ -2,7 +2,7 @@ extern crate cc;
 #[cfg(feature = "egl")] extern crate gl_generator;
 
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 mod build_data;
 
@@ -11,11 +11,50 @@ fn main() {
     generate_bindings();
 }
 
+fn build_egl(target: &str) {
+    if !target.contains("windows") {
+        return;
+    }
+
+    let mut build = cc::Build::new();
+
+    let data = build_data::EGL;
+    for &(k, v) in data.defines {
+        build.define(k, v);
+    }
+
+    for file in data.includes {
+        build.include(fixup_path(file));
+    }
+
+    let mut cmd = build.get_compiler().to_command();
+    let out = env::var("OUT_DIR").unwrap();
+    let out = Path::new(&out);
+    cmd.arg(out.join("angle.lib"));
+
+    for lib in data.os_libs {
+        cmd.arg(&format!("{}.lib", lib));
+    }
+
+    for file in data.sources {
+        cmd.arg(fixup_path(file));
+    }
+
+    cmd.arg("/wd4100");
+    cmd.arg("/wd4127");
+    cmd.arg("/LD");
+    cmd.arg(&format!("/Fe{}", out.join("libEGL").display()));
+    cmd.arg("/link");
+    cmd.arg("/DEF:gfx/angle/checkout/src/libEGL/libEGL.def");
+    let status = cmd.status();
+    assert!(status.unwrap().success());
+}
+
 fn build_angle() {
     let target = env::var("TARGET").unwrap();
     let egl = env::var("CARGO_FEATURE_EGL").is_ok() && target.contains("windows");
 
-    let data = if egl { build_data::EGL } else { build_data::TRANSLATOR };
+    let data = if egl { build_data::ANGLE } else { build_data::TRANSLATOR };
 
     let repo = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
     env::set_current_dir(repo).unwrap();
@@ -54,7 +93,14 @@ fn build_angle() {
         .flag("-std=c++11")
         .flag_if_supported("-msse2")  // GNU
         .flag_if_supported("-arch:SSE2")  // MSVC
+        .flag_if_supported("/wd4100")
+        .flag_if_supported("/wd4127")
+        .flag_if_supported("/wd9002")
         .compile("angle");
+
+    if egl {
+        build_egl(&target);
+    }
 
     for lib in data.os_libs {
         println!("cargo:rustc-link-lib={}", lib);

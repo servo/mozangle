@@ -15,13 +15,6 @@ pub mod egl {
     use std::ffi::CString;
     use std::os::raw::c_void;
 
-    pub fn get_proc_address(name: &str) -> *const c_void {
-        let name = CString::new(name.as_bytes()).unwrap();
-        unsafe {
-            ffi::GetProcAddress(name.as_ptr()) as *const _ as _
-        }
-    }
-
     pub mod ffi {
         use std::os::raw::{c_void, c_long};
 
