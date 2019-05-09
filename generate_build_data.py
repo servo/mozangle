@@ -7,7 +7,7 @@ ANGLE = path.join(REPO, "gfx", "angle")
 
 def run():
     data = {}
-    for lib in ["translator", "libEGL"]:
+    for lib in ["translator", "libANGLE", "libEGL"]:
         data[lib] = {
             "DEFINES": {},
             "LOCAL_INCLUDES": [],
@@ -63,6 +63,7 @@ def write(data, f):
         b"\n"
     )
     write_lib(b"TRANSLATOR", data["translator"], f)
+    write_lib(b"ANGLE", data["libANGLE"], f)
     write_lib(b"EGL", data["libEGL"], f)
 
 def write_lib(name, data, f):
