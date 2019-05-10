@@ -9,8 +9,8 @@
 #include "compiler/translator/ASTMetadataHLSL.h"
 
 #include "compiler/translator/CallDAG.h"
-#include "compiler/translator/IntermTraverse.h"
 #include "compiler/translator/SymbolTable.h"
+#include "compiler/translator/tree_util/IntermTraverse.h"
 
 namespace sh
 {
@@ -170,8 +170,7 @@ class PullComputeDiscontinuousAndGradientLoops : public TIntermTraverser
           mMetadata(&(*metadataList)[index]),
           mIndex(index),
           mDag(dag)
-    {
-    }
+    {}
 
     void traverse(TIntermFunctionDefinition *node)
     {
@@ -336,8 +335,7 @@ class PushDiscontinuousLoops : public TIntermTraverser
           mIndex(index),
           mDag(dag),
           mNestedDiscont(mMetadata->mCalledInDiscontinuousLoop ? 1 : 0)
-    {
-    }
+    {}
 
     void traverse(TIntermFunctionDefinition *node)
     {
@@ -388,7 +386,7 @@ class PushDiscontinuousLoops : public TIntermTraverser
 
     int mNestedDiscont;
 };
-}
+}  // namespace
 
 bool ASTMetadataHLSL::hasGradientInCallGraph(TIntermLoop *node)
 {

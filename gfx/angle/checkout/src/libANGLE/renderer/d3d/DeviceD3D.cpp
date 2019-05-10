@@ -19,8 +19,7 @@ namespace rx
 
 DeviceD3D::DeviceD3D(GLint deviceType, void *nativeDevice)
     : mDevice(nativeDevice), mDeviceType(deviceType), mIsInitialized(false)
-{
-}
+{}
 
 DeviceD3D::~DeviceD3D()
 {
@@ -28,7 +27,7 @@ DeviceD3D::~DeviceD3D()
     if (mIsInitialized && mDeviceType == EGL_D3D11_DEVICE_ANGLE)
     {
         // DeviceD3D holds a ref to an externally-sourced D3D11 device. We must release it.
-        ID3D11Device *device = reinterpret_cast<ID3D11Device *>(mDevice);
+        ID3D11Device *device = static_cast<ID3D11Device *>(mDevice);
         device->Release();
     }
 #endif
@@ -49,7 +48,7 @@ egl::Error DeviceD3D::initialize()
     if (mDeviceType == EGL_D3D11_DEVICE_ANGLE)
     {
         // Validate the device
-        IUnknown *iunknown = reinterpret_cast<IUnknown *>(mDevice);
+        IUnknown *iunknown = static_cast<IUnknown *>(mDevice);
 
         ID3D11Device *d3dDevice = nullptr;
         HRESULT hr =
@@ -80,4 +79,4 @@ void DeviceD3D::generateExtensions(egl::DeviceExtensions *outExtensions) const
     outExtensions->deviceD3D = true;
 }
 
-}
+}  // namespace rx

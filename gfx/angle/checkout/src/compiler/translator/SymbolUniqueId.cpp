@@ -13,19 +13,11 @@ namespace sh
 {
 
 TSymbolUniqueId::TSymbolUniqueId(TSymbolTable *symbolTable) : mId(symbolTable->nextUniqueIdValue())
-{
-}
+{}
 
-TSymbolUniqueId::TSymbolUniqueId(const TSymbol &symbol) : mId(symbol.uniqueId().get())
-{
-}
+TSymbolUniqueId::TSymbolUniqueId(const TSymbol &symbol) : mId(symbol.uniqueId().get()) {}
 
 TSymbolUniqueId &TSymbolUniqueId::operator=(const TSymbolUniqueId &) = default;
-
-int TSymbolUniqueId::get() const
-{
-    return mId;
-}
 
 bool TSymbolUniqueId::operator==(const TSymbolUniqueId &other) const
 {

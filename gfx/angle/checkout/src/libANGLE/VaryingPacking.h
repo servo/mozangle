@@ -30,8 +30,7 @@ struct PackedVarying
 {
     PackedVarying(const sh::ShaderVariable &varyingIn, sh::InterpolationType interpolationIn)
         : PackedVarying(varyingIn, interpolationIn, "")
-    {
-    }
+    {}
     PackedVarying(const sh::ShaderVariable &varyingIn,
                   sh::InterpolationType interpolationIn,
                   const std::string &parentStructNameIn)
@@ -40,8 +39,7 @@ struct PackedVarying
           interpolation(interpolationIn),
           parentStructName(parentStructNameIn),
           arrayIndex(GL_INVALID_INDEX)
-    {
-    }
+    {}
 
     bool isStructField() const { return !parentStructName.empty(); }
 
@@ -85,8 +83,7 @@ struct PackedVaryingRegister final
           varyingRowIndex(0),
           registerRow(0),
           registerColumn(0)
-    {
-    }
+    {}
 
     PackedVaryingRegister(const PackedVaryingRegister &) = default;
     PackedVaryingRegister &operator=(const PackedVaryingRegister &) = default;
@@ -128,9 +125,6 @@ struct PackedVaryingRegister final
 
     // The column of the register row into which we've packed this varying.
     unsigned int registerColumn;
-
-    // Assigned after packing
-    unsigned int semanticIndex;
 };
 
 // Supported packing modes:
@@ -152,9 +146,7 @@ class VaryingPacking final : angle::NonCopyable
     VaryingPacking(GLuint maxVaryingVectors, PackMode packMode);
     ~VaryingPacking();
 
-    bool packUserVaryings(gl::InfoLog &infoLog,
-                          const std::vector<PackedVarying> &packedVaryings,
-                          const std::vector<std::string> &tfVaryings);
+    bool packUserVaryings(gl::InfoLog &infoLog, const std::vector<PackedVarying> &packedVaryings);
 
     bool collectAndPackUserVaryings(gl::InfoLog &infoLog,
                                     const ProgramMergedVaryings &mergedVaryings,
@@ -179,6 +171,8 @@ class VaryingPacking final : angle::NonCopyable
         return static_cast<unsigned int>(mRegisterList.size());
     }
 
+    const std::vector<std::string> &getInactiveVaryingNames() const;
+
   private:
     bool packVarying(const PackedVarying &packedVarying);
     bool isFree(unsigned int registerRow,
@@ -192,6 +186,7 @@ class VaryingPacking final : angle::NonCopyable
     std::vector<Register> mRegisterMap;
     std::vector<PackedVaryingRegister> mRegisterList;
     std::vector<PackedVarying> mPackedVaryings;
+    std::vector<std::string> mInactiveVaryingNames;
 
     PackMode mPackMode;
 };

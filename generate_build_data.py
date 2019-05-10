@@ -34,6 +34,7 @@ def parse_lib(directory, data, suffix=""):
         "CONFIG": {
             "SSE2_FLAGS": "",
             "OS_ARCH": "neither",
+            "INTEL_ARCHITECTURE": "Yes",
         },
     }
     env.update(data)
@@ -83,7 +84,8 @@ def write_lib(name, data, f):
     f.write(b"};\n")
 
 def string_literal(s):
-    return b"\"%s\"" % repr(s)[1:-1].encode("utf-8")
+    prelen = 2 if len(s)>=4 and s[0] == '\"' else 1
+    return b"\"%s\"" % repr(s)[prelen:-prelen].encode("utf-8")
 
 def write_list(name, items, f):
     items = sorted(set(items))
