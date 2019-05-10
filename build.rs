@@ -90,7 +90,7 @@ fn build_angle() {
         .file("src/shaders/glslang-c.cpp")
         .cpp(true)
         .warnings(false)
-        .flag("-std=c++11")
+        .flag("-std=c++14")
         .flag_if_supported("-msse2")  // GNU
         .flag_if_supported("-arch:SSE2")  // MSVC
         .flag_if_supported("/wd4100")
