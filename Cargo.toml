@@ -1,6 +1,6 @@
 [package]
 name = "mozangle"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["The ANGLE Project Authors", "The Servo Project Developers"]
 license = " BSD-3-Clause"
 description = "Mozilla’s fork of Google ANGLE, repackaged as a Rust crate "
@@ -12,7 +12,7 @@ lazy_static = "1.0"
 
 [build-dependencies]
 cc = { version = "1.0.5" }
-gl_generator = { version = "0.10.0", optional = true }
+gl_generator = { version = "0.11.0", optional = true }
 
 [features]
 egl = ["gl_generator"]  # Only does anything on Windows
