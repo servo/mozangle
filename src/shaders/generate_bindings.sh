@@ -9,4 +9,5 @@ bindgen \
     -o bindings.rs \
     bindings.hpp \
     -- -I../../gfx/angle/checkout/include \
-    -std=c++11
+    -I/usr/local/opt/llvm/include/c++/v1/ \
+    -std=c++14
