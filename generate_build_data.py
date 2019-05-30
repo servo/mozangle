@@ -88,8 +88,9 @@ def write_lib(name, data, f):
     f.write(b"};\n")
 
 def string_literal(s):
-    prelen = 2 if len(s)>=4 and s[0] == '\"' else 1
-    return b"\"%s\"" % repr(s)[prelen:-prelen].encode("utf-8")
+    prelen = 1
+    raw = repr(s).replace('"', '\\"')
+    return b"\"%s\"" % raw[prelen:-prelen].encode("utf-8")
 
 def write_list(name, items, f):
     items = sorted(set(items))
