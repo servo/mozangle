@@ -91,11 +91,17 @@ fn build_angle() {
         .cpp(true)
         .warnings(false)
         .flag("-std=c++11")
-        .flag_if_supported("-msse2")  // GNU
-        .flag_if_supported("-arch:SSE2")  // MSVC
         .flag_if_supported("/wd4100")
         .flag_if_supported("/wd4127")
-        .flag_if_supported("/wd9002")
+        .flag_if_supported("/wd9002");
+
+    if target.contains("x86_64") || target.contains("i686") {
+        build
+            .flag_if_supported("-msse2")  // GNU
+            .flag_if_supported("-arch:SSE2");  // MSVC
+    }
+
+    build
         .compile("angle");
 
     if egl {
