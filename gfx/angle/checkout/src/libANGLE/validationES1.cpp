@@ -6,23 +6,648 @@
 
 // validationES1.cpp: Validation functions for OpenGL ES 1.0 entry point parameters
 
-#include "libANGLE/validationES1.h"
+#include "libANGLE/validationES1_autogen.h"
 
 #include "common/debug.h"
+#include "libANGLE/Context.h"
+#include "libANGLE/ErrorStrings.h"
+#include "libANGLE/GLES1State.h"
+#include "libANGLE/queryconversions.h"
+#include "libANGLE/queryutils.h"
+#include "libANGLE/validationES.h"
+
+#define ANGLE_VALIDATE_IS_GLES1(context)                                \
+    do                                                                  \
+    {                                                                   \
+        if (context->getClientMajorVersion() > 1)                       \
+        {                                                               \
+            context->validationError(GL_INVALID_OPERATION, kGLES1Only); \
+            return false;                                               \
+        }                                                               \
+    } while (0)
+
+namespace gl
+{
+using namespace err;
+
+bool ValidateAlphaFuncCommon(Context *context, AlphaTestFunc func)
+{
+    switch (func)
+    {
+        case AlphaTestFunc::AlwaysPass:
+        case AlphaTestFunc::Equal:
+        case AlphaTestFunc::Gequal:
+        case AlphaTestFunc::Greater:
+        case AlphaTestFunc::Lequal:
+        case AlphaTestFunc::Less:
+        case AlphaTestFunc::Never:
+        case AlphaTestFunc::NotEqual:
+            return true;
+        default:
+            context->validationError(GL_INVALID_ENUM, kEnumNotSupported);
+            return false;
+    }
+}
+
+bool ValidateClientStateCommon(Context *context, ClientVertexArrayType arrayType)
+{
+    ANGLE_VALIDATE_IS_GLES1(context);
+    switch (arrayType)
+    {
+        case ClientVertexArrayType::Vertex:
+        case ClientVertexArrayType::Normal:
+        case ClientVertexArrayType::Color:
+        case ClientVertexArrayType::TextureCoord:
+            return true;
+        case ClientVertexArrayType::PointSize:
+            if (!context->getExtensions().pointSizeArray)
+            {
+                context->validationError(GL_INVALID_ENUM, kPointSizeArrayExtensionNotEnabled);
+                return false;
+            }
+            return true;
+        default:
+            context->validationError(GL_INVALID_ENUM, kInvalidClientState);
+            return false;
+    }
+}
+
+bool ValidateBuiltinVertexAttributeCommon(Context *context,
+                                          ClientVertexArrayType arrayType,
+                                          GLint size,
+                                          VertexAttribType type,
+                                          GLsizei stride,
+                                          const void *pointer)
+{
+    ANGLE_VALIDATE_IS_GLES1(context);
+
+    if (stride < 0)
+    {
+        context->validationError(GL_INVALID_VALUE, kInvalidVertexPointerStride);
+        return false;
+    }
+
+    int minSize = 1;
+    int maxSize = 4;
+
+    switch (arrayType)
+    {
+        case ClientVertexArrayType::Vertex:
+        case ClientVertexArrayType::TextureCoord:
+            minSize = 2;
+            maxSize = 4;
+            break;
+        case ClientVertexArrayType::Normal:
+            minSize = 3;
+            maxSize = 3;
+            break;
+        case ClientVertexArrayType::Color:
+            minSize = 4;
+            maxSize = 4;
+            break;
+        case ClientVertexArrayType::PointSize:
+            if (!context->getExtensions().pointSizeArray)
+            {
+                context->validationError(GL_INVALID_ENUM, kPointSizeArrayExtensionNotEnabled);
+                return false;
+            }
+
+            minSize = 1;
+            maxSize = 1;
+            break;
+        default:
+            UNREACHABLE();
+            return false;
+    }
+
+    if (size < minSize || size > maxSize)
+    {
+        context->validationError(GL_INVALID_VALUE, kInvalidVertexPointerSize);
+        return false;
+    }
+
+    switch (type)
+    {
+        case VertexAttribType::Byte:
+            if (arrayType == ClientVertexArrayType::PointSize)
+            {
+                context->validationError(GL_INVALID_ENUM, kInvalidVertexPointerType);
+                return false;
+            }
+            break;
+        case VertexAttribType::Short:
+            if (arrayType == ClientVertexArrayType::PointSize ||
+                arrayType == ClientVertexArrayType::Color)
+            {
+                context->validationError(GL_INVALID_ENUM, kInvalidVertexPointerType);
+                return false;
+            }
+            break;
+        case VertexAttribType::Fixed:
+        case VertexAttribType::Float:
+            break;
+        default:
+            context->validationError(GL_INVALID_ENUM, kInvalidVertexPointerType);
+            return false;
+    }
+
+    return true;
+}
+
+bool ValidateLightCaps(Context *context, GLenum light)
+{
+    if (light < GL_LIGHT0 || light >= GL_LIGHT0 + context->getCaps().maxLights)
+    {
+        context->validationError(GL_INVALID_ENUM, kInvalidLight);
+        return false;
+    }
+
+    return true;
+}
+
+bool ValidateLightCommon(Context *context,
+                         GLenum light,
+                         LightParameter pname,
+                         const GLfloat *params)
+{
+
+    ANGLE_VALIDATE_IS_GLES1(context);
+
+    if (!ValidateLightCaps(context, light))
+    {
+        return false;
+    }
+
+    switch (pname)
+    {
+        case LightParameter::Ambient:
+        case LightParameter::Diffuse:
+        case LightParameter::Specular:
+        case LightParameter::Position:
+        case LightParameter::SpotDirection:
+            return true;
+        case LightParameter::SpotExponent:
+            if (params[0] < 0.0f || params[0] > 128.0f)
+            {
+                context->validationError(GL_INVALID_VALUE, kLightParameterOutOfRange);
+                return false;
+            }
+            return true;
+        case LightParameter::SpotCutoff:
+            if (params[0] == 180.0f)
+            {
+                return true;
+            }
+            if (params[0] < 0.0f || params[0] > 90.0f)
+            {
+                context->validationError(GL_INVALID_VALUE, kLightParameterOutOfRange);
+                return false;
+            }
+            return true;
+        case LightParameter::ConstantAttenuation:
+        case LightParameter::LinearAttenuation:
+        case LightParameter::QuadraticAttenuation:
+            if (params[0] < 0.0f)
+            {
+                context->validationError(GL_INVALID_VALUE, kLightParameterOutOfRange);
+                return false;
+            }
+            return true;
+        default:
+            context->validationError(GL_INVALID_ENUM, kInvalidLightParameter);
+            return false;
+    }
+}
+
+bool ValidateLightSingleComponent(Context *context,
+                                  GLenum light,
+                                  LightParameter pname,
+                                  GLfloat param)
+{
+    if (!ValidateLightCommon(context, light, pname, &param))
+    {
+        return false;
+    }
+
+    if (GetLightParameterCount(pname) > 1)
+    {
+        context->validationError(GL_INVALID_ENUM, kInvalidLightParameter);
+        return false;
+    }
+
+    return true;
+}
+
+bool ValidateMaterialCommon(Context *context,
+                            GLenum face,
+                            MaterialParameter pname,
+                            const GLfloat *params)
+{
+    switch (pname)
+    {
+        case MaterialParameter::Ambient:
+        case MaterialParameter::Diffuse:
+        case MaterialParameter::Specular:
+        case MaterialParameter::Emission:
+            return true;
+        case MaterialParameter::Shininess:
+            if (params[0] < 0.0f || params[0] > 128.0f)
+            {
+                context->validationError(GL_INVALID_VALUE, kMaterialParameterOutOfRange);
+                return false;
+            }
+            return true;
+        default:
+            context->validationError(GL_INVALID_ENUM, kInvalidMaterialParameter);
+            return false;
+    }
+}
+
+bool ValidateMaterialSetting(Context *context,
+                             GLenum face,
+                             MaterialParameter pname,
+                             const GLfloat *params)
+{
+    ANGLE_VALIDATE_IS_GLES1(context);
+
+    if (face != GL_FRONT_AND_BACK)
+    {
+        context->validationError(GL_INVALID_ENUM, kInvalidMaterialFace);
+        return false;
+    }
+
+    return ValidateMaterialCommon(context, face, pname, params);
+}
+
+bool ValidateMaterialQuery(Context *context, GLenum face, MaterialParameter pname)
+{
+    ANGLE_VALIDATE_IS_GLES1(context);
+
+    if (face != GL_FRONT && face != GL_BACK)
+    {
+        context->validationError(GL_INVALID_ENUM, kInvalidMaterialFace);
+        return false;
+    }
+
+    GLfloat dummyParams[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+
+    return ValidateMaterialCommon(context, face, pname, dummyParams);
+}
+
+bool ValidateMaterialSingleComponent(Context *context,
+                                     GLenum face,
+                                     MaterialParameter pname,
+                                     GLfloat param)
+{
+    if (!ValidateMaterialSetting(context, face, pname, &param))
+    {
+        return false;
+    }
+
+    if (GetMaterialParameterCount(pname) > 1)
+    {
+        context->validationError(GL_INVALID_ENUM, kInvalidMaterialParameter);
+        return false;
+    }
+
+    return true;
+}
+
+bool ValidateLightModelCommon(Context *context, GLenum pname)
+{
+    ANGLE_VALIDATE_IS_GLES1(context);
+    switch (pname)
+    {
+        case GL_LIGHT_MODEL_AMBIENT:
+        case GL_LIGHT_MODEL_TWO_SIDE:
+            return true;
+        default:
+            context->validationError(GL_INVALID_ENUM, kInvalidLightModelParameter);
+            return false;
+    }
+}
+
+bool ValidateLightModelSingleComponent(Context *context, GLenum pname)
+{
+    if (!ValidateLightModelCommon(context, pname))
+    {
+        return false;
+    }
+
+    switch (pname)
+    {
+        case GL_LIGHT_MODEL_TWO_SIDE:
+            return true;
+        default:
+            context->validationError(GL_INVALID_ENUM, kInvalidLightModelParameter);
+            return false;
+    }
+}
+
+bool ValidateClipPlaneCommon(Context *context, GLenum plane)
+{
+    ANGLE_VALIDATE_IS_GLES1(context);
+
+    if (plane < GL_CLIP_PLANE0 || plane >= GL_CLIP_PLANE0 + context->getCaps().maxClipPlanes)
+    {
+        context->validationError(GL_INVALID_ENUM, kInvalidClipPlane);
+        return false;
+    }
+
+    return true;
+}
+
+bool ValidateFogCommon(Context *context, GLenum pname, const GLfloat *params)
+{
+    ANGLE_VALIDATE_IS_GLES1(context);
+
+    switch (pname)
+    {
+        case GL_FOG_MODE:
+        {
+            GLenum modeParam = static_cast<GLenum>(params[0]);
+            switch (modeParam)
+            {
+                case GL_EXP:
+                case GL_EXP2:
+                case GL_LINEAR:
+                    return true;
+                default:
+                    context->validationError(GL_INVALID_VALUE, kInvalidFogMode);
+                    return false;
+            }
+        }
+        break;
+        case GL_FOG_START:
+        case GL_FOG_END:
+        case GL_FOG_COLOR:
+            break;
+        case GL_FOG_DENSITY:
+            if (params[0] < 0.0f)
+            {
+                context->validationError(GL_INVALID_VALUE, kInvalidFogDensity);
+                return false;
+            }
+            break;
+        default:
+            context->validationError(GL_INVALID_ENUM, kInvalidFogParameter);
+            return false;
+    }
+    return true;
+}
+
+bool ValidateTexEnvCommon(Context *context,
+                          TextureEnvTarget target,
+                          TextureEnvParameter pname,
+                          const GLfloat *params)
+{
+    ANGLE_VALIDATE_IS_GLES1(context);
+
+    switch (target)
+    {
+        case TextureEnvTarget::Env:
+            switch (pname)
+            {
+                case TextureEnvParameter::Mode:
+                {
+                    TextureEnvMode mode = FromGLenum<TextureEnvMode>(ConvertToGLenum(params[0]));
+                    switch (mode)
+                    {
+                        case TextureEnvMode::Add:
+                        case TextureEnvMode::Blend:
+                        case TextureEnvMode::Combine:
+                        case TextureEnvMode::Decal:
+                        case TextureEnvMode::Modulate:
+                        case TextureEnvMode::Replace:
+                            break;
+                        default:
+                            context->validationError(GL_INVALID_VALUE, kInvalidTextureEnvMode);
+                            return false;
+                    }
+                    break;
+                }
+                case TextureEnvParameter::CombineRgb:
+                case TextureEnvParameter::CombineAlpha:
+                {
+                    TextureCombine combine = FromGLenum<TextureCombine>(ConvertToGLenum(params[0]));
+                    switch (combine)
+                    {
+                        case TextureCombine::Add:
+                        case TextureCombine::AddSigned:
+                        case TextureCombine::Interpolate:
+                        case TextureCombine::Modulate:
+                        case TextureCombine::Replace:
+                        case TextureCombine::Subtract:
+                            break;
+                        case TextureCombine::Dot3Rgb:
+                        case TextureCombine::Dot3Rgba:
+                            if (pname == TextureEnvParameter::CombineAlpha)
+                            {
+                                context->validationError(GL_INVALID_VALUE, kInvalidTextureCombine);
+                                return false;
+                            }
+                            break;
+                        default:
+                            context->validationError(GL_INVALID_VALUE, kInvalidTextureCombine);
+                            return false;
+                    }
+                    break;
+                }
+                case TextureEnvParameter::Src0Rgb:
+                case TextureEnvParameter::Src1Rgb:
+                case TextureEnvParameter::Src2Rgb:
+                case TextureEnvParameter::Src0Alpha:
+                case TextureEnvParameter::Src1Alpha:
+                case TextureEnvParameter::Src2Alpha:
+                {
+                    TextureSrc combine = FromGLenum<TextureSrc>(ConvertToGLenum(params[0]));
+                    switch (combine)
+                    {
+                        case TextureSrc::Constant:
+                        case TextureSrc::Previous:
+                        case TextureSrc::PrimaryColor:
+                        case TextureSrc::Texture:
+                            break;
+                        default:
+                            context->validationError(GL_INVALID_VALUE, kInvalidTextureCombineSrc);
+                            return false;
+                    }
+                    break;
+                }
+                case TextureEnvParameter::Op0Rgb:
+                case TextureEnvParameter::Op1Rgb:
+                case TextureEnvParameter::Op2Rgb:
+                case TextureEnvParameter::Op0Alpha:
+                case TextureEnvParameter::Op1Alpha:
+                case TextureEnvParameter::Op2Alpha:
+                {
+                    TextureOp operand = FromGLenum<TextureOp>(ConvertToGLenum(params[0]));
+                    switch (operand)
+                    {
+                        case TextureOp::SrcAlpha:
+                        case TextureOp::OneMinusSrcAlpha:
+                            break;
+                        case TextureOp::SrcColor:
+                        case TextureOp::OneMinusSrcColor:
+                            if (pname == TextureEnvParameter::Op0Alpha ||
+                                pname == TextureEnvParameter::Op1Alpha ||
+                                pname == TextureEnvParameter::Op2Alpha)
+                            {
+                                context->validationError(GL_INVALID_VALUE, kInvalidTextureCombine);
+                                return false;
+                            }
+                            break;
+                        default:
+                            context->validationError(GL_INVALID_VALUE, kInvalidTextureCombineOp);
+                            return false;
+                    }
+                    break;
+                }
+                case TextureEnvParameter::RgbScale:
+                case TextureEnvParameter::AlphaScale:
+                    if (params[0] != 1.0f && params[0] != 2.0f && params[0] != 4.0f)
+                    {
+                        context->validationError(GL_INVALID_VALUE, kInvalidTextureEnvScale);
+                        return false;
+                    }
+                    break;
+                case TextureEnvParameter::Color:
+                    break;
+                default:
+                    context->validationError(GL_INVALID_ENUM, kInvalidTextureEnvParameter);
+                    return false;
+            }
+            break;
+        case TextureEnvTarget::PointSprite:
+            if (!context->getExtensions().pointSprite)
+            {
+                context->validationError(GL_INVALID_ENUM, kInvalidTextureEnvTarget);
+                return false;
+            }
+            switch (pname)
+            {
+                case TextureEnvParameter::PointCoordReplace:
+                    break;
+                default:
+                    context->validationError(GL_INVALID_ENUM, kInvalidTextureEnvParameter);
+                    return false;
+            }
+            break;
+        default:
+            context->validationError(GL_INVALID_ENUM, kInvalidTextureEnvTarget);
+            return false;
+    }
+    return true;
+}
+
+bool ValidateGetTexEnvCommon(Context *context, TextureEnvTarget target, TextureEnvParameter pname)
+{
+    GLfloat dummy[4] = {};
+    switch (pname)
+    {
+        case TextureEnvParameter::Mode:
+            ConvertPackedEnum(TextureEnvMode::Add, dummy);
+            break;
+        case TextureEnvParameter::CombineRgb:
+        case TextureEnvParameter::CombineAlpha:
+            ConvertPackedEnum(TextureCombine::Add, dummy);
+            break;
+        case TextureEnvParameter::Src0Rgb:
+        case TextureEnvParameter::Src1Rgb:
+        case TextureEnvParameter::Src2Rgb:
+        case TextureEnvParameter::Src0Alpha:
+        case TextureEnvParameter::Src1Alpha:
+        case TextureEnvParameter::Src2Alpha:
+            ConvertPackedEnum(TextureSrc::Constant, dummy);
+            break;
+        case TextureEnvParameter::Op0Rgb:
+        case TextureEnvParameter::Op1Rgb:
+        case TextureEnvParameter::Op2Rgb:
+        case TextureEnvParameter::Op0Alpha:
+        case TextureEnvParameter::Op1Alpha:
+        case TextureEnvParameter::Op2Alpha:
+            ConvertPackedEnum(TextureOp::SrcAlpha, dummy);
+            break;
+        case TextureEnvParameter::RgbScale:
+        case TextureEnvParameter::AlphaScale:
+        case TextureEnvParameter::PointCoordReplace:
+            dummy[0] = 1.0f;
+            break;
+        default:
+            break;
+    }
+
+    return ValidateTexEnvCommon(context, target, pname, dummy);
+}
+
+bool ValidatePointParameterCommon(Context *context, PointParameter pname, const GLfloat *params)
+{
+    ANGLE_VALIDATE_IS_GLES1(context);
+
+    switch (pname)
+    {
+        case PointParameter::PointSizeMin:
+        case PointParameter::PointSizeMax:
+        case PointParameter::PointFadeThresholdSize:
+        case PointParameter::PointDistanceAttenuation:
+            for (unsigned int i = 0; i < GetPointParameterCount(pname); i++)
+            {
+                if (params[i] < 0.0f)
+                {
+                    context->validationError(GL_INVALID_VALUE, kInvalidPointParameterValue);
+                    return false;
+                }
+            }
+            break;
+        default:
+            context->validationError(GL_INVALID_ENUM, kInvalidPointParameter);
+            return false;
+    }
+
+    return true;
+}
+
+bool ValidatePointSizeCommon(Context *context, GLfloat size)
+{
+    ANGLE_VALIDATE_IS_GLES1(context);
+
+    if (size <= 0.0f)
+    {
+        context->validationError(GL_INVALID_VALUE, kInvalidPointSizeValue);
+        return false;
+    }
+
+    return true;
+}
+
+bool ValidateDrawTexCommon(Context *context, float width, float height)
+{
+    ANGLE_VALIDATE_IS_GLES1(context);
+
+    if (width <= 0.0f || height <= 0.0f)
+    {
+        context->validationError(GL_INVALID_VALUE, kNonPositiveDrawTextureDimension);
+        return false;
+    }
+
+    return true;
+}
+
+}  // namespace gl
 
 namespace gl
 {
 
-bool ValidateAlphaFunc(Context *context, GLenum func, GLfloat ref)
+bool ValidateAlphaFunc(Context *context, AlphaTestFunc func, GLfloat ref)
 {
-    UNIMPLEMENTED();
-    return true;
+    ANGLE_VALIDATE_IS_GLES1(context);
+    return ValidateAlphaFuncCommon(context, func);
 }
 
-bool ValidateAlphaFuncx(Context *context, GLenum func, GLfixed ref)
+bool ValidateAlphaFuncx(Context *context, AlphaTestFunc func, GLfixed ref)
 {
-    UNIMPLEMENTED();
-    return true;
+    ANGLE_VALIDATE_IS_GLES1(context);
+    return ValidateAlphaFuncCommon(context, func);
 }
 
 bool ValidateClearColorx(Context *context, GLfixed red, GLfixed green, GLfixed blue, GLfixed alpha)
@@ -39,48 +664,46 @@ bool ValidateClearDepthx(Context *context, GLfixed depth)
 
 bool ValidateClientActiveTexture(Context *context, GLenum texture)
 {
-    UNIMPLEMENTED();
-    return true;
+    ANGLE_VALIDATE_IS_GLES1(context);
+    return ValidateMultitextureUnit(context, texture);
 }
 
-bool ValidateClipPlanef(Context *context, GLenum p, const GLfloat *eqn)
+bool ValidateClipPlanef(Context *context, GLenum plane, const GLfloat *eqn)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateClipPlaneCommon(context, plane);
 }
 
 bool ValidateClipPlanex(Context *context, GLenum plane, const GLfixed *equation)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateClipPlaneCommon(context, plane);
 }
 
 bool ValidateColor4f(Context *context, GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha)
 {
-    UNIMPLEMENTED();
+    ANGLE_VALIDATE_IS_GLES1(context);
     return true;
 }
 
 bool ValidateColor4ub(Context *context, GLubyte red, GLubyte green, GLubyte blue, GLubyte alpha)
 {
-    UNIMPLEMENTED();
+    ANGLE_VALIDATE_IS_GLES1(context);
     return true;
 }
 
 bool ValidateColor4x(Context *context, GLfixed red, GLfixed green, GLfixed blue, GLfixed alpha)
 {
-    UNIMPLEMENTED();
+    ANGLE_VALIDATE_IS_GLES1(context);
     return true;
 }
 
 bool ValidateColorPointer(Context *context,
                           GLint size,
-                          GLenum type,
+                          VertexAttribType type,
                           GLsizei stride,
                           const void *pointer)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateBuiltinVertexAttributeCommon(context, ClientVertexArrayType::Color, size, type,
+                                                stride, pointer);
 }
 
 bool ValidateCullFace(Context *context, GLenum mode)
@@ -95,40 +718,43 @@ bool ValidateDepthRangex(Context *context, GLfixed n, GLfixed f)
     return true;
 }
 
-bool ValidateDisableClientState(Context *context, GLenum array)
+bool ValidateDisableClientState(Context *context, ClientVertexArrayType arrayType)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateClientStateCommon(context, arrayType);
 }
 
-bool ValidateEnableClientState(Context *context, GLenum array)
+bool ValidateEnableClientState(Context *context, ClientVertexArrayType arrayType)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateClientStateCommon(context, arrayType);
 }
 
 bool ValidateFogf(Context *context, GLenum pname, GLfloat param)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateFogCommon(context, pname, &param);
 }
 
 bool ValidateFogfv(Context *context, GLenum pname, const GLfloat *params)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateFogCommon(context, pname, params);
 }
 
 bool ValidateFogx(Context *context, GLenum pname, GLfixed param)
 {
-    UNIMPLEMENTED();
-    return true;
+    GLfloat asFloat = FixedToFloat(param);
+    return ValidateFogCommon(context, pname, &asFloat);
 }
 
-bool ValidateFogxv(Context *context, GLenum pname, const GLfixed *param)
+bool ValidateFogxv(Context *context, GLenum pname, const GLfixed *params)
 {
-    UNIMPLEMENTED();
-    return true;
+    unsigned int paramCount = GetFogParameterCount(pname);
+    GLfloat paramsf[4]      = {};
+
+    for (unsigned int i = 0; i < paramCount; i++)
+    {
+        paramsf[i] = FixedToFloat(params[i]);
+    }
+
+    return ValidateFogCommon(context, pname, paramsf);
 }
 
 bool ValidateFrustumf(Context *context,
@@ -139,7 +765,11 @@ bool ValidateFrustumf(Context *context,
                       GLfloat n,
                       GLfloat f)
 {
-    UNIMPLEMENTED();
+    ANGLE_VALIDATE_IS_GLES1(context);
+    if (l == r || b == t || n == f || n <= 0.0f || f <= 0.0f)
+    {
+        context->validationError(GL_INVALID_VALUE, kInvalidProjectionMatrix);
+    }
     return true;
 }
 
@@ -151,7 +781,11 @@ bool ValidateFrustumx(Context *context,
                       GLfixed n,
                       GLfixed f)
 {
-    UNIMPLEMENTED();
+    ANGLE_VALIDATE_IS_GLES1(context);
+    if (l == r || b == t || n == f || n <= 0 || f <= 0)
+    {
+        context->validationError(GL_INVALID_VALUE, kInvalidProjectionMatrix);
+    }
     return true;
 }
 
@@ -163,14 +797,12 @@ bool ValidateGetBufferParameteriv(Context *context, GLenum target, GLenum pname,
 
 bool ValidateGetClipPlanef(Context *context, GLenum plane, GLfloat *equation)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateClipPlaneCommon(context, plane);
 }
 
 bool ValidateGetClipPlanex(Context *context, GLenum plane, GLfixed *equation)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateClipPlaneCommon(context, plane);
 }
 
 bool ValidateGetFixedv(Context *context, GLenum pname, GLfixed *params)
@@ -179,106 +811,125 @@ bool ValidateGetFixedv(Context *context, GLenum pname, GLfixed *params)
     return true;
 }
 
-bool ValidateGetLightfv(Context *context, GLenum light, GLenum pname, GLfloat *params)
+bool ValidateGetLightfv(Context *context, GLenum light, LightParameter pname, GLfloat *params)
 {
-    UNIMPLEMENTED();
-    return true;
+    GLfloat dummyParams[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    return ValidateLightCommon(context, light, pname, dummyParams);
 }
 
-bool ValidateGetLightxv(Context *context, GLenum light, GLenum pname, GLfixed *params)
+bool ValidateGetLightxv(Context *context, GLenum light, LightParameter pname, GLfixed *params)
 {
-    UNIMPLEMENTED();
-    return true;
+    GLfloat dummyParams[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    return ValidateLightCommon(context, light, pname, dummyParams);
 }
 
-bool ValidateGetMaterialfv(Context *context, GLenum face, GLenum pname, GLfloat *params)
+bool ValidateGetMaterialfv(Context *context, GLenum face, MaterialParameter pname, GLfloat *params)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateMaterialQuery(context, face, pname);
 }
 
-bool ValidateGetMaterialxv(Context *context, GLenum face, GLenum pname, GLfixed *params)
+bool ValidateGetMaterialxv(Context *context, GLenum face, MaterialParameter pname, GLfixed *params)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateMaterialQuery(context, face, pname);
 }
 
 bool ValidateGetPointerv(Context *context, GLenum pname, void **params)
 {
-    UNIMPLEMENTED();
-    return true;
+    ANGLE_VALIDATE_IS_GLES1(context);
+    switch (pname)
+    {
+        case GL_VERTEX_ARRAY_POINTER:
+        case GL_NORMAL_ARRAY_POINTER:
+        case GL_COLOR_ARRAY_POINTER:
+        case GL_TEXTURE_COORD_ARRAY_POINTER:
+        case GL_POINT_SIZE_ARRAY_POINTER_OES:
+            return true;
+        default:
+            context->validationError(GL_INVALID_ENUM, kInvalidPointerQuery);
+            return false;
+    }
 }
 
-bool ValidateGetTexEnvfv(Context *context, GLenum target, GLenum pname, GLfloat *params)
+bool ValidateGetTexEnvfv(Context *context,
+                         TextureEnvTarget target,
+                         TextureEnvParameter pname,
+                         GLfloat *params)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateGetTexEnvCommon(context, target, pname);
 }
 
-bool ValidateGetTexEnviv(Context *context, GLenum target, GLenum pname, GLint *params)
+bool ValidateGetTexEnviv(Context *context,
+                         TextureEnvTarget target,
+                         TextureEnvParameter pname,
+                         GLint *params)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateGetTexEnvCommon(context, target, pname);
 }
 
-bool ValidateGetTexEnvxv(Context *context, GLenum target, GLenum pname, GLfixed *params)
+bool ValidateGetTexEnvxv(Context *context,
+                         TextureEnvTarget target,
+                         TextureEnvParameter pname,
+                         GLfixed *params)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateGetTexEnvCommon(context, target, pname);
 }
 
-bool ValidateGetTexParameterxv(Context *context, GLenum target, GLenum pname, GLfixed *params)
+bool ValidateGetTexParameterxv(Context *context, TextureType target, GLenum pname, GLfixed *params)
 {
-    UNIMPLEMENTED();
+    ANGLE_VALIDATE_IS_GLES1(context);
+
+    if (!ValidateGetTexParameterBase(context, target, pname, nullptr))
+    {
+        return false;
+    }
+
     return true;
 }
 
 bool ValidateLightModelf(Context *context, GLenum pname, GLfloat param)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateLightModelSingleComponent(context, pname);
 }
 
 bool ValidateLightModelfv(Context *context, GLenum pname, const GLfloat *params)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateLightModelCommon(context, pname);
 }
 
 bool ValidateLightModelx(Context *context, GLenum pname, GLfixed param)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateLightModelSingleComponent(context, pname);
 }
 
 bool ValidateLightModelxv(Context *context, GLenum pname, const GLfixed *param)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateLightModelCommon(context, pname);
 }
 
-bool ValidateLightf(Context *context, GLenum light, GLenum pname, GLfloat param)
+bool ValidateLightf(Context *context, GLenum light, LightParameter pname, GLfloat param)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateLightSingleComponent(context, light, pname, param);
 }
 
-bool ValidateLightfv(Context *context, GLenum light, GLenum pname, const GLfloat *params)
+bool ValidateLightfv(Context *context, GLenum light, LightParameter pname, const GLfloat *params)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateLightCommon(context, light, pname, params);
 }
 
-bool ValidateLightx(Context *context, GLenum light, GLenum pname, GLfixed param)
+bool ValidateLightx(Context *context, GLenum light, LightParameter pname, GLfixed param)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateLightSingleComponent(context, light, pname, FixedToFloat(param));
 }
 
-bool ValidateLightxv(Context *context, GLenum light, GLenum pname, const GLfixed *params)
+bool ValidateLightxv(Context *context, GLenum light, LightParameter pname, const GLfixed *params)
 {
-    UNIMPLEMENTED();
-    return true;
+    GLfloat paramsf[4];
+    for (unsigned int i = 0; i < GetLightParameterCount(pname); i++)
+    {
+        paramsf[i] = FixedToFloat(params[i]);
+    }
+
+    return ValidateLightCommon(context, light, pname, paramsf);
 }
 
 bool ValidateLineWidthx(Context *context, GLfixed width)
@@ -289,67 +940,107 @@ bool ValidateLineWidthx(Context *context, GLfixed width)
 
 bool ValidateLoadIdentity(Context *context)
 {
-    UNIMPLEMENTED();
+    ANGLE_VALIDATE_IS_GLES1(context);
     return true;
 }
 
 bool ValidateLoadMatrixf(Context *context, const GLfloat *m)
 {
-    UNIMPLEMENTED();
+    ANGLE_VALIDATE_IS_GLES1(context);
     return true;
 }
 
 bool ValidateLoadMatrixx(Context *context, const GLfixed *m)
 {
-    UNIMPLEMENTED();
+    ANGLE_VALIDATE_IS_GLES1(context);
     return true;
 }
 
-bool ValidateLogicOp(Context *context, GLenum opcode)
+bool ValidateLogicOp(Context *context, LogicalOperation opcode)
 {
-    UNIMPLEMENTED();
-    return true;
+    ANGLE_VALIDATE_IS_GLES1(context);
+    switch (opcode)
+    {
+        case LogicalOperation::And:
+        case LogicalOperation::AndInverted:
+        case LogicalOperation::AndReverse:
+        case LogicalOperation::Clear:
+        case LogicalOperation::Copy:
+        case LogicalOperation::CopyInverted:
+        case LogicalOperation::Equiv:
+        case LogicalOperation::Invert:
+        case LogicalOperation::Nand:
+        case LogicalOperation::Noop:
+        case LogicalOperation::Nor:
+        case LogicalOperation::Or:
+        case LogicalOperation::OrInverted:
+        case LogicalOperation::OrReverse:
+        case LogicalOperation::Set:
+        case LogicalOperation::Xor:
+            return true;
+        default:
+            context->validationError(GL_INVALID_ENUM, kInvalidLogicOp);
+            return false;
+    }
 }
 
-bool ValidateMaterialf(Context *context, GLenum face, GLenum pname, GLfloat param)
+bool ValidateMaterialf(Context *context, GLenum face, MaterialParameter pname, GLfloat param)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateMaterialSingleComponent(context, face, pname, param);
 }
 
-bool ValidateMaterialfv(Context *context, GLenum face, GLenum pname, const GLfloat *params)
+bool ValidateMaterialfv(Context *context,
+                        GLenum face,
+                        MaterialParameter pname,
+                        const GLfloat *params)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateMaterialSetting(context, face, pname, params);
 }
 
-bool ValidateMaterialx(Context *context, GLenum face, GLenum pname, GLfixed param)
+bool ValidateMaterialx(Context *context, GLenum face, MaterialParameter pname, GLfixed param)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateMaterialSingleComponent(context, face, pname, FixedToFloat(param));
 }
 
-bool ValidateMaterialxv(Context *context, GLenum face, GLenum pname, const GLfixed *param)
+bool ValidateMaterialxv(Context *context,
+                        GLenum face,
+                        MaterialParameter pname,
+                        const GLfixed *params)
 {
-    UNIMPLEMENTED();
-    return true;
+    GLfloat paramsf[4];
+
+    for (unsigned int i = 0; i < GetMaterialParameterCount(pname); i++)
+    {
+        paramsf[i] = FixedToFloat(params[i]);
+    }
+
+    return ValidateMaterialSetting(context, face, pname, paramsf);
 }
 
-bool ValidateMatrixMode(Context *context, GLenum mode)
+bool ValidateMatrixMode(Context *context, MatrixType mode)
 {
-    UNIMPLEMENTED();
-    return true;
+    ANGLE_VALIDATE_IS_GLES1(context);
+    switch (mode)
+    {
+        case MatrixType::Projection:
+        case MatrixType::Modelview:
+        case MatrixType::Texture:
+            return true;
+        default:
+            context->validationError(GL_INVALID_ENUM, kInvalidMatrixMode);
+            return false;
+    }
 }
 
 bool ValidateMultMatrixf(Context *context, const GLfloat *m)
 {
-    UNIMPLEMENTED();
+    ANGLE_VALIDATE_IS_GLES1(context);
     return true;
 }
 
 bool ValidateMultMatrixx(Context *context, const GLfixed *m)
 {
-    UNIMPLEMENTED();
+    ANGLE_VALIDATE_IS_GLES1(context);
     return true;
 }
 
@@ -360,37 +1051,40 @@ bool ValidateMultiTexCoord4f(Context *context,
                              GLfloat r,
                              GLfloat q)
 {
-    UNIMPLEMENTED();
-    return true;
+    ANGLE_VALIDATE_IS_GLES1(context);
+    return ValidateMultitextureUnit(context, target);
 }
 
 bool ValidateMultiTexCoord4x(Context *context,
-                             GLenum texture,
+                             GLenum target,
                              GLfixed s,
                              GLfixed t,
                              GLfixed r,
                              GLfixed q)
 {
-    UNIMPLEMENTED();
-    return true;
+    ANGLE_VALIDATE_IS_GLES1(context);
+    return ValidateMultitextureUnit(context, target);
 }
 
 bool ValidateNormal3f(Context *context, GLfloat nx, GLfloat ny, GLfloat nz)
 {
-    UNIMPLEMENTED();
+    ANGLE_VALIDATE_IS_GLES1(context);
     return true;
 }
 
 bool ValidateNormal3x(Context *context, GLfixed nx, GLfixed ny, GLfixed nz)
 {
-    UNIMPLEMENTED();
+    ANGLE_VALIDATE_IS_GLES1(context);
     return true;
 }
 
-bool ValidateNormalPointer(Context *context, GLenum type, GLsizei stride, const void *pointer)
+bool ValidateNormalPointer(Context *context,
+                           VertexAttribType type,
+                           GLsizei stride,
+                           const void *pointer)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateBuiltinVertexAttributeCommon(context, ClientVertexArrayType::Normal, 3, type,
+                                                stride, pointer);
 }
 
 bool ValidateOrthof(Context *context,
@@ -401,7 +1095,11 @@ bool ValidateOrthof(Context *context,
                     GLfloat n,
                     GLfloat f)
 {
-    UNIMPLEMENTED();
+    ANGLE_VALIDATE_IS_GLES1(context);
+    if (l == r || b == t || n == f || n <= 0.0f || f <= 0.0f)
+    {
+        context->validationError(GL_INVALID_VALUE, kInvalidProjectionMatrix);
+    }
     return true;
 }
 
@@ -413,44 +1111,62 @@ bool ValidateOrthox(Context *context,
                     GLfixed n,
                     GLfixed f)
 {
-    UNIMPLEMENTED();
+    ANGLE_VALIDATE_IS_GLES1(context);
+    if (l == r || b == t || n == f || n <= 0 || f <= 0)
+    {
+        context->validationError(GL_INVALID_VALUE, kInvalidProjectionMatrix);
+    }
     return true;
 }
 
-bool ValidatePointParameterf(Context *context, GLenum pname, GLfloat param)
+bool ValidatePointParameterf(Context *context, PointParameter pname, GLfloat param)
 {
-    UNIMPLEMENTED();
-    return true;
+    unsigned int paramCount = GetPointParameterCount(pname);
+    if (paramCount != 1)
+    {
+        context->validationError(GL_INVALID_ENUM, kInvalidPointParameter);
+        return false;
+    }
+
+    return ValidatePointParameterCommon(context, pname, &param);
 }
 
-bool ValidatePointParameterfv(Context *context, GLenum pname, const GLfloat *params)
+bool ValidatePointParameterfv(Context *context, PointParameter pname, const GLfloat *params)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidatePointParameterCommon(context, pname, params);
 }
 
-bool ValidatePointParameterx(Context *context, GLenum pname, GLfixed param)
+bool ValidatePointParameterx(Context *context, PointParameter pname, GLfixed param)
 {
-    UNIMPLEMENTED();
-    return true;
+    unsigned int paramCount = GetPointParameterCount(pname);
+    if (paramCount != 1)
+    {
+        context->validationError(GL_INVALID_ENUM, kInvalidPointParameter);
+        return false;
+    }
+
+    GLfloat paramf = FixedToFloat(param);
+    return ValidatePointParameterCommon(context, pname, &paramf);
 }
 
-bool ValidatePointParameterxv(Context *context, GLenum pname, const GLfixed *params)
+bool ValidatePointParameterxv(Context *context, PointParameter pname, const GLfixed *params)
 {
-    UNIMPLEMENTED();
-    return true;
+    GLfloat paramsf[4] = {};
+    for (unsigned int i = 0; i < GetPointParameterCount(pname); i++)
+    {
+        paramsf[i] = FixedToFloat(params[i]);
+    }
+    return ValidatePointParameterCommon(context, pname, paramsf);
 }
 
 bool ValidatePointSize(Context *context, GLfloat size)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidatePointSizeCommon(context, size);
 }
 
 bool ValidatePointSizex(Context *context, GLfixed size)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidatePointSizeCommon(context, FixedToFloat(size));
 }
 
 bool ValidatePolygonOffsetx(Context *context, GLfixed factor, GLfixed units)
@@ -461,25 +1177,37 @@ bool ValidatePolygonOffsetx(Context *context, GLfixed factor, GLfixed units)
 
 bool ValidatePopMatrix(Context *context)
 {
-    UNIMPLEMENTED();
+    ANGLE_VALIDATE_IS_GLES1(context);
+    const auto &stack = context->getState().gles1().currentMatrixStack();
+    if (stack.size() == 1)
+    {
+        context->validationError(GL_STACK_UNDERFLOW, kMatrixStackUnderflow);
+        return false;
+    }
     return true;
 }
 
 bool ValidatePushMatrix(Context *context)
 {
-    UNIMPLEMENTED();
+    ANGLE_VALIDATE_IS_GLES1(context);
+    const auto &stack = context->getState().gles1().currentMatrixStack();
+    if (stack.size() == stack.max_size())
+    {
+        context->validationError(GL_STACK_OVERFLOW, kMatrixStackOverflow);
+        return false;
+    }
     return true;
 }
 
 bool ValidateRotatef(Context *context, GLfloat angle, GLfloat x, GLfloat y, GLfloat z)
 {
-    UNIMPLEMENTED();
+    ANGLE_VALIDATE_IS_GLES1(context);
     return true;
 }
 
 bool ValidateRotatex(Context *context, GLfixed angle, GLfixed x, GLfixed y, GLfixed z)
 {
-    UNIMPLEMENTED();
+    ANGLE_VALIDATE_IS_GLES1(context);
     return true;
 }
 
@@ -491,100 +1219,141 @@ bool ValidateSampleCoveragex(Context *context, GLclampx value, GLboolean invert)
 
 bool ValidateScalef(Context *context, GLfloat x, GLfloat y, GLfloat z)
 {
-    UNIMPLEMENTED();
+    ANGLE_VALIDATE_IS_GLES1(context);
     return true;
 }
 
 bool ValidateScalex(Context *context, GLfixed x, GLfixed y, GLfixed z)
 {
-    UNIMPLEMENTED();
+    ANGLE_VALIDATE_IS_GLES1(context);
     return true;
 }
 
-bool ValidateShadeModel(Context *context, GLenum mode)
+bool ValidateShadeModel(Context *context, ShadingModel mode)
 {
-    UNIMPLEMENTED();
-    return true;
+    ANGLE_VALIDATE_IS_GLES1(context);
+    switch (mode)
+    {
+        case ShadingModel::Flat:
+        case ShadingModel::Smooth:
+            return true;
+        default:
+            context->validationError(GL_INVALID_ENUM, kInvalidShadingModel);
+            return false;
+    }
 }
 
 bool ValidateTexCoordPointer(Context *context,
                              GLint size,
-                             GLenum type,
+                             VertexAttribType type,
                              GLsizei stride,
                              const void *pointer)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateBuiltinVertexAttributeCommon(context, ClientVertexArrayType::TextureCoord, size,
+                                                type, stride, pointer);
 }
 
-bool ValidateTexEnvf(Context *context, GLenum target, GLenum pname, GLfloat param)
+bool ValidateTexEnvf(Context *context,
+                     TextureEnvTarget target,
+                     TextureEnvParameter pname,
+                     GLfloat param)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateTexEnvCommon(context, target, pname, &param);
 }
 
-bool ValidateTexEnvfv(Context *context, GLenum target, GLenum pname, const GLfloat *params)
+bool ValidateTexEnvfv(Context *context,
+                      TextureEnvTarget target,
+                      TextureEnvParameter pname,
+                      const GLfloat *params)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateTexEnvCommon(context, target, pname, params);
 }
 
-bool ValidateTexEnvi(Context *context, GLenum target, GLenum pname, GLint param)
+bool ValidateTexEnvi(Context *context,
+                     TextureEnvTarget target,
+                     TextureEnvParameter pname,
+                     GLint param)
 {
-    UNIMPLEMENTED();
-    return true;
+    GLfloat paramf = static_cast<GLfloat>(param);
+    return ValidateTexEnvCommon(context, target, pname, &paramf);
 }
 
-bool ValidateTexEnviv(Context *context, GLenum target, GLenum pname, const GLint *params)
+bool ValidateTexEnviv(Context *context,
+                      TextureEnvTarget target,
+                      TextureEnvParameter pname,
+                      const GLint *params)
 {
-    UNIMPLEMENTED();
-    return true;
+    GLfloat paramsf[4];
+    for (unsigned int i = 0; i < GetTextureEnvParameterCount(pname); i++)
+    {
+        paramsf[i] = static_cast<GLfloat>(params[i]);
+    }
+    return ValidateTexEnvCommon(context, target, pname, paramsf);
 }
 
-bool ValidateTexEnvx(Context *context, GLenum target, GLenum pname, GLfixed param)
+bool ValidateTexEnvx(Context *context,
+                     TextureEnvTarget target,
+                     TextureEnvParameter pname,
+                     GLfixed param)
 {
-    UNIMPLEMENTED();
-    return true;
+    GLfloat paramf = static_cast<GLfloat>(param);
+    return ValidateTexEnvCommon(context, target, pname, &paramf);
 }
 
-bool ValidateTexEnvxv(Context *context, GLenum target, GLenum pname, const GLfixed *params)
+bool ValidateTexEnvxv(Context *context,
+                      TextureEnvTarget target,
+                      TextureEnvParameter pname,
+                      const GLfixed *params)
 {
-    UNIMPLEMENTED();
-    return true;
+    GLfloat paramsf[4];
+    for (unsigned int i = 0; i < GetTextureEnvParameterCount(pname); i++)
+    {
+        paramsf[i] = static_cast<GLfloat>(params[i]);
+    }
+    return ValidateTexEnvCommon(context, target, pname, paramsf);
 }
 
-bool ValidateTexParameterx(Context *context, GLenum target, GLenum pname, GLfixed param)
+bool ValidateTexParameterx(Context *context, TextureType target, GLenum pname, GLfixed param)
 {
-    UNIMPLEMENTED();
-    return true;
+    ANGLE_VALIDATE_IS_GLES1(context);
+    GLfloat paramf = FixedToFloat(param);
+    return ValidateTexParameterBase(context, target, pname, -1, false, &paramf);
 }
 
-bool ValidateTexParameterxv(Context *context, GLenum target, GLenum pname, const GLfixed *params)
+bool ValidateTexParameterxv(Context *context,
+                            TextureType target,
+                            GLenum pname,
+                            const GLfixed *params)
 {
-    UNIMPLEMENTED();
-    return true;
+    ANGLE_VALIDATE_IS_GLES1(context);
+    GLfloat paramsf[4] = {};
+    for (unsigned int i = 0; i < GetTexParameterCount(pname); i++)
+    {
+        paramsf[i] = FixedToFloat(params[i]);
+    }
+    return ValidateTexParameterBase(context, target, pname, -1, true, paramsf);
 }
 
 bool ValidateTranslatef(Context *context, GLfloat x, GLfloat y, GLfloat z)
 {
-    UNIMPLEMENTED();
+    ANGLE_VALIDATE_IS_GLES1(context);
     return true;
 }
 
 bool ValidateTranslatex(Context *context, GLfixed x, GLfixed y, GLfixed z)
 {
-    UNIMPLEMENTED();
+    ANGLE_VALIDATE_IS_GLES1(context);
     return true;
 }
 
 bool ValidateVertexPointer(Context *context,
                            GLint size,
-                           GLenum type,
+                           VertexAttribType type,
                            GLsizei stride,
                            const void *pointer)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateBuiltinVertexAttributeCommon(context, ClientVertexArrayType::Vertex, size, type,
+                                                stride, pointer);
 }
 
 bool ValidateDrawTexfOES(Context *context,
@@ -594,26 +1363,24 @@ bool ValidateDrawTexfOES(Context *context,
                          GLfloat width,
                          GLfloat height)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateDrawTexCommon(context, width, height);
 }
 
 bool ValidateDrawTexfvOES(Context *context, const GLfloat *coords)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateDrawTexCommon(context, coords[3], coords[4]);
 }
 
 bool ValidateDrawTexiOES(Context *context, GLint x, GLint y, GLint z, GLint width, GLint height)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateDrawTexCommon(context, static_cast<GLfloat>(width),
+                                 static_cast<GLfloat>(height));
 }
 
 bool ValidateDrawTexivOES(Context *context, const GLint *coords)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateDrawTexCommon(context, static_cast<GLfloat>(coords[3]),
+                                 static_cast<GLfloat>(coords[4]));
 }
 
 bool ValidateDrawTexsOES(Context *context,
@@ -623,14 +1390,14 @@ bool ValidateDrawTexsOES(Context *context,
                          GLshort width,
                          GLshort height)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateDrawTexCommon(context, static_cast<GLfloat>(width),
+                                 static_cast<GLfloat>(height));
 }
 
 bool ValidateDrawTexsvOES(Context *context, const GLshort *coords)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateDrawTexCommon(context, static_cast<GLfloat>(coords[3]),
+                                 static_cast<GLfloat>(coords[4]));
 }
 
 bool ValidateDrawTexxOES(Context *context,
@@ -640,14 +1407,12 @@ bool ValidateDrawTexxOES(Context *context,
                          GLfixed width,
                          GLfixed height)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateDrawTexCommon(context, FixedToFloat(width), FixedToFloat(height));
 }
 
 bool ValidateDrawTexxvOES(Context *context, const GLfixed *coords)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateDrawTexCommon(context, FixedToFloat(coords[3]), FixedToFloat(coords[4]));
 }
 
 bool ValidateCurrentPaletteMatrixOES(Context *context, GLuint matrixpaletteindex)
@@ -682,10 +1447,13 @@ bool ValidateWeightPointerOES(Context *context,
     return true;
 }
 
-bool ValidatePointSizePointerOES(Context *context, GLenum type, GLsizei stride, const void *pointer)
+bool ValidatePointSizePointerOES(Context *context,
+                                 VertexAttribType type,
+                                 GLsizei stride,
+                                 const void *pointer)
 {
-    UNIMPLEMENTED();
-    return true;
+    return ValidateBuiltinVertexAttributeCommon(context, ClientVertexArrayType::PointSize, 1, type,
+                                                stride, pointer);
 }
 
 bool ValidateQueryMatrixxOES(Context *context, GLfixed *mantissa, GLint *exponent)
@@ -693,4 +1461,171 @@ bool ValidateQueryMatrixxOES(Context *context, GLfixed *mantissa, GLint *exponen
     UNIMPLEMENTED();
     return true;
 }
+
+bool ValidateGenFramebuffersOES(Context *context, GLsizei n, GLuint *framebuffers)
+{
+    UNIMPLEMENTED();
+    return true;
 }
+
+bool ValidateDeleteFramebuffersOES(Context *context, GLsizei n, const GLuint *framebuffers)
+{
+    UNIMPLEMENTED();
+    return true;
+}
+
+bool ValidateGenRenderbuffersOES(Context *context, GLsizei n, GLuint *renderbuffers)
+{
+    UNIMPLEMENTED();
+    return true;
+}
+
+bool ValidateDeleteRenderbuffersOES(Context *context, GLsizei n, const GLuint *renderbuffers)
+{
+    UNIMPLEMENTED();
+    return true;
+}
+
+bool ValidateBindFramebufferOES(Context *context, GLenum target, GLuint framebuffer)
+{
+    UNIMPLEMENTED();
+    return true;
+}
+
+bool ValidateBindRenderbufferOES(Context *context, GLenum target, GLuint renderbuffer)
+{
+    UNIMPLEMENTED();
+    return true;
+}
+
+bool ValidateCheckFramebufferStatusOES(Context *context, GLenum target)
+{
+    UNIMPLEMENTED();
+    return true;
+}
+
+bool ValidateFramebufferRenderbufferOES(Context *context,
+                                        GLenum target,
+                                        GLenum attachment,
+                                        GLenum rbtarget,
+                                        GLuint renderbuffer)
+{
+    UNIMPLEMENTED();
+    return true;
+}
+
+bool ValidateFramebufferTexture2DOES(Context *context,
+                                     GLenum target,
+                                     GLenum attachment,
+                                     TextureTarget textarget,
+                                     GLuint texture,
+                                     GLint level)
+{
+    UNIMPLEMENTED();
+    return true;
+}
+
+bool ValidateGenerateMipmapOES(Context *context, TextureType target)
+{
+    UNIMPLEMENTED();
+    return true;
+}
+
+bool ValidateGetFramebufferAttachmentParameterivOES(Context *context,
+                                                    GLenum target,
+                                                    GLenum attachment,
+                                                    GLenum pname,
+                                                    GLint *params)
+{
+    UNIMPLEMENTED();
+    return true;
+}
+
+bool ValidateGetRenderbufferParameterivOES(Context *context,
+                                           GLenum target,
+                                           GLenum pname,
+                                           GLint *params)
+{
+    UNIMPLEMENTED();
+    return true;
+}
+
+bool ValidateIsFramebufferOES(Context *context, GLuint framebuffer)
+{
+    UNIMPLEMENTED();
+    return true;
+}
+
+bool ValidateIsRenderbufferOES(Context *context, GLuint renderbuffer)
+{
+    UNIMPLEMENTED();
+    return true;
+}
+
+bool ValidateRenderbufferStorageOES(Context *context,
+                                    GLenum target,
+                                    GLenum internalformat,
+                                    GLsizei width,
+                                    GLsizei height)
+{
+    UNIMPLEMENTED();
+    return true;
+}
+
+// GL_OES_texture_cube_map
+
+bool ValidateGetTexGenfvOES(Context *context, GLenum coord, GLenum pname, GLfloat *params)
+{
+    UNIMPLEMENTED();
+    return true;
+}
+
+bool ValidateGetTexGenivOES(Context *context, GLenum coord, GLenum pname, int *params)
+{
+    UNIMPLEMENTED();
+    return true;
+}
+
+bool ValidateGetTexGenxvOES(Context *context, GLenum coord, GLenum pname, GLfixed *params)
+{
+    UNIMPLEMENTED();
+    return true;
+}
+
+bool ValidateTexGenfvOES(Context *context, GLenum coord, GLenum pname, const GLfloat *params)
+{
+    UNIMPLEMENTED();
+    return true;
+}
+
+bool ValidateTexGenivOES(Context *context, GLenum coord, GLenum pname, const GLint *param)
+{
+    UNIMPLEMENTED();
+    return true;
+}
+
+bool ValidateTexGenxvOES(Context *context, GLenum coord, GLenum pname, const GLint *param)
+{
+    UNIMPLEMENTED();
+    return true;
+}
+
+bool ValidateTexGenfOES(Context *context, GLenum coord, GLenum pname, GLfloat param)
+{
+    UNIMPLEMENTED();
+    return true;
+}
+
+bool ValidateTexGeniOES(Context *context, GLenum coord, GLenum pname, GLint param)
+{
+    UNIMPLEMENTED();
+    return true;
+}
+
+bool ValidateTexGenxOES(Context *context, GLenum coord, GLenum pname, GLfixed param)
+{
+    UNIMPLEMENTED();
+    return true;
+}
+
+}  // namespace gl

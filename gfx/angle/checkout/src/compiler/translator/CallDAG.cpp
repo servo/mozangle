@@ -11,8 +11,8 @@
 #include "compiler/translator/CallDAG.h"
 
 #include "compiler/translator/Diagnostics.h"
-#include "compiler/translator/IntermTraverse.h"
 #include "compiler/translator/SymbolTable.h"
+#include "compiler/translator/tree_util/IntermTraverse.h"
 
 namespace sh
 {
@@ -27,8 +27,7 @@ class CallDAG::CallDAGCreator : public TIntermTraverser
           mDiagnostics(diagnostics),
           mCurrentFunction(nullptr),
           mCurrentIndex(0)
-    {
-    }
+    {}
 
     InitResult assignIndices()
     {
@@ -89,8 +88,7 @@ class CallDAG::CallDAGCreator : public TIntermTraverser
     {
         CreatorFunctionData()
             : definitionNode(nullptr), name(""), index(0), indexAssigned(false), visiting(false)
-        {
-        }
+        {}
 
         std::set<CreatorFunctionData *> callees;
         TIntermFunctionDefinition *definitionNode;
@@ -116,16 +114,13 @@ class CallDAG::CallDAGCreator : public TIntermTraverser
         return false;
     }
 
-    bool visitFunctionPrototype(Visit visit, TIntermFunctionPrototype *node) override
+    void visitFunctionPrototype(TIntermFunctionPrototype *node) override
     {
         ASSERT(mCurrentFunction == nullptr);
 
         // Function declaration, create an empty record.
         auto &record = mFunctions[node->getFunction()->uniqueId().get()];
         record.name  = node->getFunction()->name();
-
-        // No need to traverse the parameters.
-        return false;
     }
 
     // Track functions called from another function.
@@ -263,13 +258,9 @@ class CallDAG::CallDAGCreator : public TIntermTraverser
 
 // CallDAG
 
-CallDAG::CallDAG()
-{
-}
+CallDAG::CallDAG() {}
 
-CallDAG::~CallDAG()
-{
-}
+CallDAG::~CallDAG() {}
 
 const size_t CallDAG::InvalidIndex = std::numeric_limits<size_t>::max();
 

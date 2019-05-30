@@ -34,6 +34,7 @@ def parse_lib(directory, data, suffix=""):
         "CONFIG": {
             "SSE2_FLAGS": "",
             "OS_ARCH": "neither",
+            "INTEL_ARCHITECTURE": "Yes",
         },
     }
     env.update(data)
@@ -66,6 +67,10 @@ def write(data, f):
     write_lib(b"ANGLE", data["libANGLE"], f)
     write_lib(b"EGL", data["libEGL"], f)
 
+def no_platform_sources(source):
+    # Filter out any accidental inclusion of platform-specific source files.
+    return "system_utils_posix.cpp" not in source and "system_utils_linux.cpp" not in source
+
 def write_lib(name, data, f):
     defines = [
         b"(%s, %s)" % (
@@ -76,14 +81,16 @@ def write_lib(name, data, f):
     ]
 
     f.write(b"pub const %s: Data = Data {\n" % name)
-    write_list(b"sources", map(string_literal, data["SOURCES"]), f)
+    write_list(b"sources", map(string_literal, filter(no_platform_sources, data["SOURCES"])), f)
     write_list(b"includes", map(string_literal, data["LOCAL_INCLUDES"]), f)
     write_list(b"defines", defines, f)
     write_list(b"os_libs", map(string_literal, data["OS_LIBS"]), f)
     f.write(b"};\n")
 
 def string_literal(s):
-    return b"\"%s\"" % repr(s)[1:-1].encode("utf-8")
+    prelen = 1
+    raw = repr(s).replace('"', '\\"')
+    return b"\"%s\"" % raw[prelen:-prelen].encode("utf-8")
 
 def write_list(name, items, f):
     items = sorted(set(items))

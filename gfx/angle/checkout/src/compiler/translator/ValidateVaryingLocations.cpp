@@ -10,8 +10,8 @@
 #include "ValidateVaryingLocations.h"
 
 #include "compiler/translator/Diagnostics.h"
-#include "compiler/translator/IntermTraverse.h"
 #include "compiler/translator/SymbolTable.h"
+#include "compiler/translator/tree_util/IntermTraverse.h"
 #include "compiler/translator/util.h"
 
 namespace sh
@@ -114,8 +114,7 @@ class ValidateVaryingLocationsTraverser : public TIntermTraverser
 
 ValidateVaryingLocationsTraverser::ValidateVaryingLocationsTraverser(GLenum shaderType)
     : TIntermTraverser(true, false, false), mShaderType(shaderType)
-{
-}
+{}
 
 bool ValidateVaryingLocationsTraverser::visitDeclaration(Visit visit, TIntermDeclaration *node)
 {

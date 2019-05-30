@@ -8,6 +8,7 @@
 
 #include "libANGLE/renderer/d3d/ProgramD3D.h"
 
+#include "common/MemoryBuffer.h"
 #include "common/bitset_utils.h"
 #include "common/string_utils.h"
 #include "common/utilities.h"
@@ -21,11 +22,13 @@
 #include "libANGLE/features.h"
 #include "libANGLE/queryconversions.h"
 #include "libANGLE/renderer/ContextImpl.h"
+#include "libANGLE/renderer/d3d/ContextD3D.h"
 #include "libANGLE/renderer/d3d/DynamicHLSL.h"
 #include "libANGLE/renderer/d3d/FramebufferD3D.h"
 #include "libANGLE/renderer/d3d/ShaderD3D.h"
 #include "libANGLE/renderer/d3d/ShaderExecutableD3D.h"
 #include "libANGLE/renderer/d3d/VertexDataManager.h"
+#include "libANGLE/renderer/renderer_utils.h"
 
 using namespace angle;
 
@@ -35,13 +38,11 @@ namespace rx
 namespace
 {
 
-void GetDefaultInputLayoutFromShader(const gl::Context *context,
-                                     gl::Shader *vertexShader,
-                                     gl::InputLayout *inputLayoutOut)
+void GetDefaultInputLayoutFromShader(gl::Shader *vertexShader, gl::InputLayout *inputLayoutOut)
 {
     inputLayoutOut->clear();
 
-    for (const sh::Attribute &shaderAttr : vertexShader->getActiveAttributes(context))
+    for (const sh::Attribute &shaderAttr : vertexShader->getActiveAttributes())
     {
         if (shaderAttr.type != GL_NONE)
         {
@@ -53,13 +54,31 @@ void GetDefaultInputLayoutFromShader(const gl::Context *context,
                 GLenum componentType = gl::VariableComponentType(transposedType);
                 GLuint components    = static_cast<GLuint>(gl::VariableColumnCount(transposedType));
                 bool pureInt         = (componentType != GL_FLOAT);
-                gl::VertexFormatType defaultType =
-                    gl::GetVertexFormatType(componentType, GL_FALSE, components, pureInt);
 
-                inputLayoutOut->push_back(defaultType);
+                gl::VertexAttribType attribType =
+                    gl::FromGLenum<gl::VertexAttribType>(componentType);
+
+                angle::FormatID defaultID =
+                    gl::GetVertexFormatID(attribType, GL_FALSE, components, pureInt);
+
+                inputLayoutOut->push_back(defaultID);
             }
         }
     }
+}
+
+size_t GetMaxOutputIndex(const std::vector<PixelShaderOutputVariable> &shaderOutputVars,
+                         size_t location)
+{
+    size_t maxIndex = 0;
+    for (auto &outputVar : shaderOutputVars)
+    {
+        if (outputVar.outputLocation == location)
+        {
+            maxIndex = std::max(maxIndex, outputVar.outputIndex);
+        }
+    }
+    return maxIndex;
 }
 
 void GetDefaultOutputLayoutFromShader(
@@ -70,101 +89,68 @@ void GetDefaultOutputLayoutFromShader(
 
     if (!shaderOutputVars.empty())
     {
-        outputLayoutOut->push_back(GL_COLOR_ATTACHMENT0 +
-                                   static_cast<unsigned int>(shaderOutputVars[0].outputIndex));
+        size_t location = shaderOutputVars[0].outputLocation;
+        size_t maxIndex = GetMaxOutputIndex(shaderOutputVars, location);
+        outputLayoutOut->assign(maxIndex + 1,
+                                GL_COLOR_ATTACHMENT0 + static_cast<unsigned int>(location));
     }
 }
 
-template <typename T, int cols, int rows>
-bool TransposeExpandMatrix(T *target, const GLfloat *value)
+void GetDefaultImage2DBindLayoutFromComputeShader(const std::vector<sh::Uniform> &image2DUniforms,
+                                                  gl::ImageUnitTextureTypeMap *image2DBindLayout)
 {
-    constexpr int targetWidth  = 4;
-    constexpr int targetHeight = rows;
-    constexpr int srcWidth     = rows;
-    constexpr int srcHeight    = cols;
+    image2DBindLayout->clear();
 
-    constexpr int copyWidth  = std::min(targetHeight, srcWidth);
-    constexpr int copyHeight = std::min(targetWidth, srcHeight);
-
-    T staging[targetWidth * targetHeight] = {0};
-
-    for (int x = 0; x < copyWidth; x++)
+    for (const sh::Uniform &image2D : image2DUniforms)
     {
-        for (int y = 0; y < copyHeight; y++)
+        if (gl::IsImage2DType(image2D.type))
         {
-            staging[x * targetWidth + y] = static_cast<T>(value[y * srcWidth + x]);
+            if (image2D.binding == -1)
+            {
+                image2DBindLayout->insert(std::make_pair(0, gl::TextureType::_2D));
+            }
+            else
+            {
+                for (unsigned int index = 0; index < image2D.getArraySizeProduct(); index++)
+                {
+                    image2DBindLayout->insert(
+                        std::make_pair(image2D.binding + index, gl::TextureType::_2D));
+                }
+            }
         }
     }
-
-    if (memcmp(target, staging, targetWidth * targetHeight * sizeof(T)) == 0)
-    {
-        return false;
-    }
-
-    memcpy(target, staging, targetWidth * targetHeight * sizeof(T));
-    return true;
 }
 
-template <typename T, int cols, int rows>
-bool ExpandMatrix(T *target, const GLfloat *value)
-{
-    constexpr int targetWidth  = 4;
-    constexpr int targetHeight = rows;
-    constexpr int srcWidth     = cols;
-    constexpr int srcHeight    = rows;
-
-    constexpr int copyWidth  = std::min(targetWidth, srcWidth);
-    constexpr int copyHeight = std::min(targetHeight, srcHeight);
-
-    T staging[targetWidth * targetHeight] = {0};
-
-    for (int y = 0; y < copyHeight; y++)
-    {
-        for (int x = 0; x < copyWidth; x++)
-        {
-            staging[y * targetWidth + x] = static_cast<T>(value[y * srcWidth + x]);
-        }
-    }
-
-    if (memcmp(target, staging, targetWidth * targetHeight * sizeof(T)) == 0)
-    {
-        return false;
-    }
-
-    memcpy(target, staging, targetWidth * targetHeight * sizeof(T));
-    return true;
-}
-
-gl::PrimitiveType GetGeometryShaderTypeFromDrawMode(GLenum drawMode)
+gl::PrimitiveMode GetGeometryShaderTypeFromDrawMode(gl::PrimitiveMode drawMode)
 {
     switch (drawMode)
     {
         // Uses the point sprite geometry shader.
-        case GL_POINTS:
-            return gl::PRIMITIVE_POINTS;
+        case gl::PrimitiveMode::Points:
+            return gl::PrimitiveMode::Points;
 
         // All line drawing uses the same geometry shader.
-        case GL_LINES:
-        case GL_LINE_STRIP:
-        case GL_LINE_LOOP:
-            return gl::PRIMITIVE_LINES;
+        case gl::PrimitiveMode::Lines:
+        case gl::PrimitiveMode::LineStrip:
+        case gl::PrimitiveMode::LineLoop:
+            return gl::PrimitiveMode::Lines;
 
         // The triangle fan primitive is emulated with strips in D3D11.
-        case GL_TRIANGLES:
-        case GL_TRIANGLE_FAN:
-            return gl::PRIMITIVE_TRIANGLES;
+        case gl::PrimitiveMode::Triangles:
+        case gl::PrimitiveMode::TriangleFan:
+            return gl::PrimitiveMode::Triangles;
 
         // Special case for triangle strips.
-        case GL_TRIANGLE_STRIP:
-            return gl::PRIMITIVE_TRIANGLE_STRIP;
+        case gl::PrimitiveMode::TriangleStrip:
+            return gl::PrimitiveMode::TriangleStrip;
 
         default:
             UNREACHABLE();
-            return gl::PRIMITIVE_TYPE_MAX;
+            return gl::PrimitiveMode::InvalidEnum;
     }
 }
 
-bool FindFlatInterpolationVarying(const std::vector<sh::Varying> &varyings)
+bool HasFlatInterpolationVarying(const std::vector<sh::Varying> &varyings)
 {
     // Note: this assumes nested structs can only be packed with one interpolation.
     for (const auto &varying : varyings)
@@ -178,32 +164,49 @@ bool FindFlatInterpolationVarying(const std::vector<sh::Varying> &varyings)
     return false;
 }
 
-// Helper method to de-tranpose a matrix uniform for an API query.
-void GetMatrixUniform(GLint columns, GLint rows, GLfloat *dataOut, const GLfloat *source)
+bool FindFlatInterpolationVaryingPerShader(gl::Shader *shader)
 {
-    for (GLint col = 0; col < columns; ++col)
+    ASSERT(shader);
+    switch (shader->getType())
     {
-        for (GLint row = 0; row < rows; ++row)
-        {
-            GLfloat *outptr      = dataOut + ((col * rows) + row);
-            const GLfloat *inptr = source + ((row * 4) + col);
-            *outptr              = *inptr;
-        }
+        case gl::ShaderType::Vertex:
+            return HasFlatInterpolationVarying(shader->getOutputVaryings());
+        case gl::ShaderType::Fragment:
+            return HasFlatInterpolationVarying(shader->getInputVaryings());
+        case gl::ShaderType::Geometry:
+            return HasFlatInterpolationVarying(shader->getInputVaryings()) ||
+                   HasFlatInterpolationVarying(shader->getOutputVaryings());
+        default:
+            UNREACHABLE();
+            return false;
     }
 }
 
-template <typename NonFloatT>
-void GetMatrixUniform(GLint columns, GLint rows, NonFloatT *dataOut, const NonFloatT *source)
+bool FindFlatInterpolationVarying(const gl::ShaderMap<gl::Shader *> &shaders)
 {
-    UNREACHABLE();
+    for (gl::ShaderType shaderType : gl::kAllGraphicsShaderTypes)
+    {
+        gl::Shader *shader = shaders[shaderType];
+        if (!shader)
+        {
+            continue;
+        }
+
+        if (FindFlatInterpolationVaryingPerShader(shader))
+        {
+            return true;
+        }
+    }
+
+    return false;
 }
 
-class UniformBlockInfo final : angle::NonCopyable
+class InterfaceBlockInfo final : angle::NonCopyable
 {
   public:
-    UniformBlockInfo() {}
+    InterfaceBlockInfo() {}
 
-    void getShaderBlockInfo(const gl::Context *context, gl::Shader *shader);
+    void getShaderBlockInfo(const std::vector<sh::InterfaceBlock> &interfaceBlocks);
 
     bool getBlockSize(const std::string &name, const std::string &mappedName, size_t *sizeOut);
     bool getBlockMemberInfo(const std::string &name,
@@ -217,11 +220,11 @@ class UniformBlockInfo final : angle::NonCopyable
     sh::BlockLayoutMap mBlockLayout;
 };
 
-void UniformBlockInfo::getShaderBlockInfo(const gl::Context *context, gl::Shader *shader)
+void InterfaceBlockInfo::getShaderBlockInfo(const std::vector<sh::InterfaceBlock> &interfaceBlocks)
 {
-    for (const sh::InterfaceBlock &interfaceBlock : shader->getUniformBlocks(context))
+    for (const sh::InterfaceBlock &interfaceBlock : interfaceBlocks)
     {
-        if (!interfaceBlock.staticUse && interfaceBlock.layout == sh::BLOCKLAYOUT_PACKED)
+        if (!interfaceBlock.active && interfaceBlock.layout == sh::BLOCKLAYOUT_PACKED)
             continue;
 
         if (mBlockSizes.count(interfaceBlock.name) > 0)
@@ -232,12 +235,13 @@ void UniformBlockInfo::getShaderBlockInfo(const gl::Context *context, gl::Shader
     }
 }
 
-size_t UniformBlockInfo::getBlockInfo(const sh::InterfaceBlock &interfaceBlock)
+size_t InterfaceBlockInfo::getBlockInfo(const sh::InterfaceBlock &interfaceBlock)
 {
-    ASSERT(interfaceBlock.staticUse || interfaceBlock.layout != sh::BLOCKLAYOUT_PACKED);
+    ASSERT(interfaceBlock.active || interfaceBlock.layout != sh::BLOCKLAYOUT_PACKED);
 
     // define member uniforms
     sh::Std140BlockEncoder std140Encoder;
+    sh::Std430BlockEncoder std430Encoder;
     sh::HLSLBlockEncoder hlslEncoder(sh::HLSLBlockEncoder::ENCODE_PACKED, false);
     sh::BlockLayoutEncoder *encoder = nullptr;
 
@@ -245,20 +249,24 @@ size_t UniformBlockInfo::getBlockInfo(const sh::InterfaceBlock &interfaceBlock)
     {
         encoder = &std140Encoder;
     }
+    else if (interfaceBlock.layout == sh::BLOCKLAYOUT_STD430)
+    {
+        encoder = &std430Encoder;
+    }
     else
     {
         encoder = &hlslEncoder;
     }
 
-    sh::GetUniformBlockInfo(interfaceBlock.fields, interfaceBlock.fieldPrefix(), encoder,
-                            &mBlockLayout);
+    sh::GetInterfaceBlockInfo(interfaceBlock.fields, interfaceBlock.fieldPrefix(), encoder,
+                              &mBlockLayout);
 
-    return encoder->getBlockSize();
+    return encoder->getCurrentOffset();
 }
 
-bool UniformBlockInfo::getBlockSize(const std::string &name,
-                                    const std::string &mappedName,
-                                    size_t *sizeOut)
+bool InterfaceBlockInfo::getBlockSize(const std::string &name,
+                                      const std::string &mappedName,
+                                      size_t *sizeOut)
 {
     size_t nameLengthWithoutArrayIndex;
     gl::ParseArrayIndex(name, &nameLengthWithoutArrayIndex);
@@ -272,23 +280,82 @@ bool UniformBlockInfo::getBlockSize(const std::string &name,
 
     *sizeOut = sizeIter->second;
     return true;
-};
+}
 
-bool UniformBlockInfo::getBlockMemberInfo(const std::string &name,
-                                          const std::string &mappedName,
-                                          sh::BlockMemberInfo *infoOut)
+bool InterfaceBlockInfo::getBlockMemberInfo(const std::string &name,
+                                            const std::string &mappedName,
+                                            sh::BlockMemberInfo *infoOut)
 {
     auto infoIter = mBlockLayout.find(name);
     if (infoIter == mBlockLayout.end())
     {
-        *infoOut = sh::BlockMemberInfo::getDefaultBlockInfo();
+        *infoOut = sh::kDefaultBlockMemberInfo;
         return false;
     }
 
     *infoOut = infoIter->second;
     return true;
-};
+}
 
+// Helper class that gathers uniform info from the default uniform block.
+class UniformEncodingVisitorD3D : public sh::BlockEncoderVisitor
+{
+  public:
+    UniformEncodingVisitorD3D(gl::ShaderType shaderType,
+                              HLSLRegisterType registerType,
+                              sh::BlockLayoutEncoder *encoder,
+                              D3DUniformMap *uniformMapOut)
+        : sh::BlockEncoderVisitor("", "", encoder),
+          mShaderType(shaderType),
+          mRegisterType(registerType),
+          mUniformMapOut(uniformMapOut)
+    {}
+
+    void visitNamedSampler(const sh::ShaderVariable &sampler,
+                           const std::string &name,
+                           const std::string &mappedName) override
+    {
+        auto uniformMapEntry = mUniformMapOut->find(name);
+        if (uniformMapEntry == mUniformMapOut->end())
+        {
+            (*mUniformMapOut)[name] =
+                new D3DUniform(sampler.type, mRegisterType, name, sampler.arraySizes, true);
+        }
+    }
+
+    void encodeVariable(const sh::ShaderVariable &variable,
+                        const sh::BlockMemberInfo &variableInfo,
+                        const std::string &name,
+                        const std::string &mappedName) override
+    {
+        auto uniformMapEntry   = mUniformMapOut->find(name);
+        D3DUniform *d3dUniform = nullptr;
+
+        if (uniformMapEntry != mUniformMapOut->end())
+        {
+            d3dUniform = uniformMapEntry->second;
+        }
+        else
+        {
+            d3dUniform =
+                new D3DUniform(variable.type, mRegisterType, name, variable.arraySizes, true);
+            (*mUniformMapOut)[name] = d3dUniform;
+        }
+
+        d3dUniform->registerElement = static_cast<unsigned int>(
+            sh::BlockLayoutEncoder::GetBlockRegisterElement(variableInfo));
+        unsigned int reg =
+            static_cast<unsigned int>(sh::BlockLayoutEncoder::GetBlockRegister(variableInfo));
+
+        ASSERT(mShaderType != gl::ShaderType::InvalidEnum);
+        d3dUniform->mShaderRegisterIndexes[mShaderType] = reg;
+    }
+
+  private:
+    gl::ShaderType mShaderType;
+    HLSLRegisterType mRegisterType;
+    D3DUniformMap *mUniformMapOut;
+};
 }  // anonymous namespace
 
 // D3DUniform Implementation
@@ -301,16 +368,13 @@ D3DUniform::D3DUniform(GLenum type,
     : typeInfo(gl::GetUniformTypeInfo(type)),
       name(nameIn),
       arraySizes(arraySizesIn),
-      vsData(nullptr),
-      psData(nullptr),
-      csData(nullptr),
+      mShaderData({}),
       regType(reg),
-      vsRegisterIndex(GL_INVALID_INDEX),
-      psRegisterIndex(GL_INVALID_INDEX),
-      csRegisterIndex(GL_INVALID_INDEX),
       registerCount(0),
       registerElement(0)
 {
+    mShaderRegisterIndexes.fill(GL_INVALID_INDEX);
+
     // We use data storage for default block uniforms to cache values that are sent to D3D during
     // rendering
     // Uniform blocks/buffers are treated separately by the Renderer (ES3 path only)
@@ -321,9 +385,7 @@ D3DUniform::D3DUniform(GLenum type,
     }
 }
 
-D3DUniform::~D3DUniform()
-{
-}
+D3DUniform::~D3DUniform() {}
 
 unsigned int D3DUniform::getArraySizeProduct() const
 {
@@ -353,38 +415,46 @@ bool D3DUniform::isImage() const
     return typeInfo.isImageType;
 }
 
-bool D3DUniform::isReferencedByVertexShader() const
+bool D3DUniform::isImage2D() const
 {
-    return vsRegisterIndex != GL_INVALID_INDEX;
+    return gl::IsImage2DType(typeInfo.type);
 }
 
-bool D3DUniform::isReferencedByFragmentShader() const
+bool D3DUniform::isReferencedByShader(gl::ShaderType shaderType) const
 {
-    return psRegisterIndex != GL_INVALID_INDEX;
-}
-
-bool D3DUniform::isReferencedByComputeShader() const
-{
-    return csRegisterIndex != GL_INVALID_INDEX;
+    return mShaderRegisterIndexes[shaderType] != GL_INVALID_INDEX;
 }
 
 const uint8_t *D3DUniform::firstNonNullData() const
 {
-    ASSERT(vsData || psData || csData || !mSamplerData.empty());
-
     if (!mSamplerData.empty())
     {
         return reinterpret_cast<const uint8_t *>(mSamplerData.data());
     }
 
-    return vsData ? vsData : (psData ? psData : csData);
+    for (gl::ShaderType shaderType : gl::AllShaderTypes())
+    {
+        if (mShaderData[shaderType])
+        {
+            return mShaderData[shaderType];
+        }
+    }
+
+    UNREACHABLE();
+    return nullptr;
 }
+
+// D3DInterfaceBlock Implementation
+D3DInterfaceBlock::D3DInterfaceBlock()
+{
+    mShaderRegisterIndexes.fill(GL_INVALID_INDEX);
+}
+
+D3DInterfaceBlock::D3DInterfaceBlock(const D3DInterfaceBlock &other) = default;
 
 // D3DVarying Implementation
 
-D3DVarying::D3DVarying() : semanticIndex(0), componentCount(0), outputSlot(0)
-{
-}
+D3DVarying::D3DVarying() : semanticIndex(0), componentCount(0), outputSlot(0) {}
 
 D3DVarying::D3DVarying(const std::string &semanticNameIn,
                        unsigned int semanticIndexIn,
@@ -394,56 +464,58 @@ D3DVarying::D3DVarying(const std::string &semanticNameIn,
       semanticIndex(semanticIndexIn),
       componentCount(componentCountIn),
       outputSlot(outputSlotIn)
-{
-}
+{}
 
 // ProgramD3DMetadata Implementation
 
 ProgramD3DMetadata::ProgramD3DMetadata(RendererD3D *renderer,
-                                       const ShaderD3D *vertexShader,
-                                       const ShaderD3D *fragmentShader)
+                                       const gl::ShaderMap<const ShaderD3D *> &attachedShaders)
     : mRendererMajorShaderModel(renderer->getMajorShaderModel()),
       mShaderModelSuffix(renderer->getShaderModelSuffix()),
       mUsesInstancedPointSpriteEmulation(
           renderer->getWorkarounds().useInstancedPointSpriteEmulation),
       mUsesViewScale(renderer->presentPathFastEnabled()),
-      mHasANGLEMultiviewEnabled(vertexShader->hasANGLEMultiviewEnabled()),
-      mUsesViewID(fragmentShader->usesViewID()),
       mCanSelectViewInVertexShader(renderer->canSelectViewInVertexShader()),
-      mVertexShader(vertexShader),
-      mFragmentShader(fragmentShader)
-{
-}
+      mAttachedShaders(attachedShaders)
+{}
+
+ProgramD3DMetadata::~ProgramD3DMetadata() = default;
 
 int ProgramD3DMetadata::getRendererMajorShaderModel() const
 {
     return mRendererMajorShaderModel;
 }
 
-bool ProgramD3DMetadata::usesBroadcast(const gl::ContextState &data) const
+bool ProgramD3DMetadata::usesBroadcast(const gl::State &data) const
 {
-    return (mFragmentShader->usesFragColor() && mFragmentShader->usesMultipleRenderTargets() &&
+    return (mAttachedShaders[gl::ShaderType::Fragment]->usesFragColor() &&
+            mAttachedShaders[gl::ShaderType::Fragment]->usesMultipleRenderTargets() &&
             data.getClientMajorVersion() < 3);
+}
+
+bool ProgramD3DMetadata::usesSecondaryColor() const
+{
+    return mAttachedShaders[gl::ShaderType::Fragment]->usesSecondaryColor();
 }
 
 bool ProgramD3DMetadata::usesFragDepth() const
 {
-    return mFragmentShader->usesFragDepth();
+    return mAttachedShaders[gl::ShaderType::Fragment]->usesFragDepth();
 }
 
 bool ProgramD3DMetadata::usesPointCoord() const
 {
-    return mFragmentShader->usesPointCoord();
+    return mAttachedShaders[gl::ShaderType::Fragment]->usesPointCoord();
 }
 
 bool ProgramD3DMetadata::usesFragCoord() const
 {
-    return mFragmentShader->usesFragCoord();
+    return mAttachedShaders[gl::ShaderType::Fragment]->usesFragCoord();
 }
 
 bool ProgramD3DMetadata::usesPointSize() const
 {
-    return mVertexShader->usesPointSize();
+    return mAttachedShaders[gl::ShaderType::Vertex]->usesPointSize();
 }
 
 bool ProgramD3DMetadata::usesInsertedPointCoordValue() const
@@ -459,12 +531,12 @@ bool ProgramD3DMetadata::usesViewScale() const
 
 bool ProgramD3DMetadata::hasANGLEMultiviewEnabled() const
 {
-    return mHasANGLEMultiviewEnabled;
+    return mAttachedShaders[gl::ShaderType::Vertex]->hasANGLEMultiviewEnabled();
 }
 
 bool ProgramD3DMetadata::usesViewID() const
 {
-    return mUsesViewID;
+    return mAttachedShaders[gl::ShaderType::Fragment]->usesViewID();
 }
 
 bool ProgramD3DMetadata::canSelectViewInVertexShader() const
@@ -499,18 +571,62 @@ bool ProgramD3DMetadata::usesSystemValuePointSize() const
 
 bool ProgramD3DMetadata::usesMultipleFragmentOuts() const
 {
-    return mFragmentShader->usesMultipleRenderTargets();
+    return mAttachedShaders[gl::ShaderType::Fragment]->usesMultipleRenderTargets();
 }
 
 GLint ProgramD3DMetadata::getMajorShaderVersion() const
 {
-    return mVertexShader->getData().getShaderVersion();
+    return mAttachedShaders[gl::ShaderType::Vertex]->getData().getShaderVersion();
 }
 
 const ShaderD3D *ProgramD3DMetadata::getFragmentShader() const
 {
-    return mFragmentShader;
+    return mAttachedShaders[gl::ShaderType::Fragment];
 }
+
+// ProgramD3D::GetExecutableTask class
+class ProgramD3D::GetExecutableTask : public Closure, public d3d::Context
+{
+  public:
+    GetExecutableTask(ProgramD3D *program) : mProgram(program) {}
+
+    virtual angle::Result run() = 0;
+
+    void operator()() override { mResult = run(); }
+
+    angle::Result getResult() const { return mResult; }
+    const gl::InfoLog &getInfoLog() const { return mInfoLog; }
+    ShaderExecutableD3D *getExecutable() { return mExecutable; }
+
+    void handleResult(HRESULT hr,
+                      const char *message,
+                      const char *file,
+                      const char *function,
+                      unsigned int line) override
+    {
+        mStoredHR       = hr;
+        mStoredMessage  = message;
+        mStoredFile     = file;
+        mStoredFunction = function;
+        mStoredLine     = line;
+    }
+
+    void popError(d3d::Context *context)
+    {
+        context->handleResult(mStoredHR, mStoredMessage, mStoredFile, mStoredFunction, mStoredLine);
+    }
+
+  protected:
+    ProgramD3D *mProgram  = nullptr;
+    angle::Result mResult = angle::Result::Continue;
+    gl::InfoLog mInfoLog;
+    ShaderExecutableD3D *mExecutable = nullptr;
+    HRESULT mStoredHR                = S_OK;
+    const char *mStoredMessage       = nullptr;
+    const char *mStoredFile          = nullptr;
+    const char *mStoredFunction      = nullptr;
+    unsigned int mStoredLine         = 0;
+};
 
 // ProgramD3D Implementation
 
@@ -518,8 +634,7 @@ ProgramD3D::VertexExecutable::VertexExecutable(const gl::InputLayout &inputLayou
                                                const Signature &signature,
                                                ShaderExecutableD3D *shaderExecutable)
     : mInputs(inputLayout), mSignature(signature), mShaderExecutable(shaderExecutable)
-{
-}
+{}
 
 ProgramD3D::VertexExecutable::~VertexExecutable()
 {
@@ -555,15 +670,15 @@ void ProgramD3D::VertexExecutable::getSignature(RendererD3D *renderer,
 
     for (size_t index = 0; index < inputLayout.size(); ++index)
     {
-        gl::VertexFormatType vertexFormatType = inputLayout[index];
-        if (vertexFormatType == gl::VERTEX_FORMAT_INVALID)
+        angle::FormatID vertexFormatID = inputLayout[index];
+        if (vertexFormatID == angle::FormatID::NONE)
             continue;
 
-        VertexConversionType conversionType = renderer->getVertexConversionType(vertexFormatType);
+        VertexConversionType conversionType = renderer->getVertexConversionType(vertexFormatID);
         if ((conversionType & VERTEX_CONVERT_GPU) == 0)
             continue;
 
-        GLenum componentType   = renderer->getVertexComponentType(vertexFormatType);
+        GLenum componentType   = renderer->getVertexComponentType(vertexFormatID);
         (*signatureOut)[index] = GetAttribType(componentType);
     }
 }
@@ -586,21 +701,26 @@ bool ProgramD3D::VertexExecutable::matchesSignature(const Signature &signature) 
 ProgramD3D::PixelExecutable::PixelExecutable(const std::vector<GLenum> &outputSignature,
                                              ShaderExecutableD3D *shaderExecutable)
     : mOutputSignature(outputSignature), mShaderExecutable(shaderExecutable)
-{
-}
+{}
 
 ProgramD3D::PixelExecutable::~PixelExecutable()
 {
     SafeDelete(mShaderExecutable);
 }
 
-ProgramD3D::Sampler::Sampler() : active(false), logicalTextureUnit(0), textureType(GL_TEXTURE_2D)
-{
-}
+ProgramD3D::ComputeExecutable::ComputeExecutable(
+    const gl::ImageUnitTextureTypeMap &signature,
+    std::unique_ptr<ShaderExecutableD3D> shaderExecutable)
+    : mSignature(signature), mShaderExecutable(std::move(shaderExecutable))
+{}
 
-ProgramD3D::Image::Image() : active(false), logicalImageUnit(0)
-{
-}
+ProgramD3D::ComputeExecutable::~ComputeExecutable() {}
+
+ProgramD3D::Sampler::Sampler()
+    : active(false), logicalTextureUnit(0), textureType(gl::TextureType::_2D)
+{}
+
+ProgramD3D::Image::Image() : active(false), logicalImageUnit(0) {}
 
 unsigned int ProgramD3D::mCurrentSerial = 1;
 
@@ -608,23 +728,14 @@ ProgramD3D::ProgramD3D(const gl::ProgramState &state, RendererD3D *renderer)
     : ProgramImpl(state),
       mRenderer(renderer),
       mDynamicHLSL(nullptr),
-      mGeometryExecutables(gl::PRIMITIVE_TYPE_MAX),
-      mComputeExecutable(nullptr),
       mUsesPointSize(false),
       mUsesFlatInterpolation(false),
-      mVertexUniformStorage(nullptr),
-      mFragmentUniformStorage(nullptr),
-      mComputeUniformStorage(nullptr),
-      mUsedVertexSamplerRange(0),
-      mUsedPixelSamplerRange(0),
-      mUsedComputeSamplerRange(0),
+      mUsedShaderSamplerRanges({}),
       mDirtySamplerMapping(true),
-      mUsedComputeImageRange(0),
-      mUsedComputeReadonlyImageRange(0),
-      mSerial(issueSerial()),
-      mVertexUniformsDirty(true),
-      mFragmentUniformsDirty(true),
-      mComputeUniformsDirty(true)
+      mUsedComputeImageRange(0, 0),
+      mUsedComputeReadonlyImageRange(0, 0),
+      mUsedComputeAtomicCounterRange(0, 0),
+      mSerial(issueSerial())
 {
     mDynamicHLSL = new DynamicHLSL(renderer);
 }
@@ -645,15 +756,19 @@ bool ProgramD3D::usesGeometryShaderForPointSpriteEmulation() const
     return usesPointSpriteEmulation() && !usesInstancedPointSpriteEmulation();
 }
 
-bool ProgramD3D::usesGeometryShader(GLenum drawMode) const
+bool ProgramD3D::usesGeometryShader(const gl::State &state, const gl::PrimitiveMode drawMode) const
 {
     if (mHasANGLEMultiviewEnabled && !mRenderer->canSelectViewInVertexShader())
     {
         return true;
     }
-    if (drawMode != GL_POINTS)
+    if (drawMode != gl::PrimitiveMode::Points)
     {
-        return mUsesFlatInterpolation;
+        if (!mUsesFlatInterpolation)
+        {
+            return false;
+        }
+        return state.getProvokingVertex() == gl::ProvokingVertex::LastVertexConvention;
     }
     return usesGeometryShaderForPointSpriteEmulation();
 }
@@ -669,31 +784,14 @@ GLint ProgramD3D::getSamplerMapping(gl::ShaderType type,
 {
     GLint logicalTextureUnit = -1;
 
-    switch (type)
+    ASSERT(type != gl::ShaderType::InvalidEnum);
+
+    ASSERT(samplerIndex < caps.maxShaderTextureImageUnits[type]);
+
+    const auto &samplers = mShaderSamplers[type];
+    if (samplerIndex < samplers.size() && samplers[samplerIndex].active)
     {
-        case gl::SHADER_FRAGMENT:
-            ASSERT(samplerIndex < caps.maxTextureImageUnits);
-            if (samplerIndex < mSamplersPS.size() && mSamplersPS[samplerIndex].active)
-            {
-                logicalTextureUnit = mSamplersPS[samplerIndex].logicalTextureUnit;
-            }
-            break;
-        case gl::SHADER_VERTEX:
-            ASSERT(samplerIndex < caps.maxVertexTextureImageUnits);
-            if (samplerIndex < mSamplersVS.size() && mSamplersVS[samplerIndex].active)
-            {
-                logicalTextureUnit = mSamplersVS[samplerIndex].logicalTextureUnit;
-            }
-            break;
-        case gl::SHADER_COMPUTE:
-            ASSERT(samplerIndex < caps.maxComputeTextureImageUnits);
-            if (samplerIndex < mSamplersCS.size() && mSamplersCS[samplerIndex].active)
-            {
-                logicalTextureUnit = mSamplersCS[samplerIndex].logicalTextureUnit;
-            }
-            break;
-        default:
-            UNREACHABLE();
+        logicalTextureUnit = samplers[samplerIndex].logicalTextureUnit;
     }
 
     if (logicalTextureUnit >= 0 &&
@@ -707,43 +805,22 @@ GLint ProgramD3D::getSamplerMapping(gl::ShaderType type,
 
 // Returns the texture type for a given Direct3D 9 sampler type and
 // index (0-15 for the pixel shader and 0-3 for the vertex shader).
-GLenum ProgramD3D::getSamplerTextureType(gl::ShaderType type, unsigned int samplerIndex) const
+gl::TextureType ProgramD3D::getSamplerTextureType(gl::ShaderType type,
+                                                  unsigned int samplerIndex) const
 {
-    switch (type)
-    {
-        case gl::SHADER_FRAGMENT:
-            ASSERT(samplerIndex < mSamplersPS.size());
-            ASSERT(mSamplersPS[samplerIndex].active);
-            return mSamplersPS[samplerIndex].textureType;
-        case gl::SHADER_VERTEX:
-            ASSERT(samplerIndex < mSamplersVS.size());
-            ASSERT(mSamplersVS[samplerIndex].active);
-            return mSamplersVS[samplerIndex].textureType;
-        case gl::SHADER_COMPUTE:
-            ASSERT(samplerIndex < mSamplersCS.size());
-            ASSERT(mSamplersCS[samplerIndex].active);
-            return mSamplersCS[samplerIndex].textureType;
-        default:
-            UNREACHABLE();
-    }
+    ASSERT(type != gl::ShaderType::InvalidEnum);
 
-    return GL_TEXTURE_2D;
+    const auto &samplers = mShaderSamplers[type];
+    ASSERT(samplerIndex < samplers.size());
+    ASSERT(samplers[samplerIndex].active);
+
+    return samplers[samplerIndex].textureType;
 }
 
-GLuint ProgramD3D::getUsedSamplerRange(gl::ShaderType type) const
+gl::RangeUI ProgramD3D::getUsedSamplerRange(gl::ShaderType type) const
 {
-    switch (type)
-    {
-        case gl::SHADER_FRAGMENT:
-            return mUsedPixelSamplerRange;
-        case gl::SHADER_VERTEX:
-            return mUsedVertexSamplerRange;
-        case gl::SHADER_COMPUTE:
-            return mUsedComputeSamplerRange;
-        default:
-            UNREACHABLE();
-            return 0u;
-    }
+    ASSERT(type != gl::ShaderType::InvalidEnum);
+    return mUsedShaderSamplerRanges[type];
 }
 
 ProgramD3D::SamplerMapping ProgramD3D::updateSamplerMapping()
@@ -763,50 +840,24 @@ ProgramD3D::SamplerMapping ProgramD3D::updateSamplerMapping()
 
         int count = d3dUniform->getArraySizeProduct();
 
-        if (d3dUniform->isReferencedByFragmentShader())
+        for (gl::ShaderType shaderType : gl::AllShaderTypes())
         {
-            unsigned int firstIndex = d3dUniform->psRegisterIndex;
-
-            for (int i = 0; i < count; i++)
+            if (!d3dUniform->isReferencedByShader(shaderType))
             {
-                unsigned int samplerIndex = firstIndex + i;
-
-                if (samplerIndex < mSamplersPS.size())
-                {
-                    ASSERT(mSamplersPS[samplerIndex].active);
-                    mSamplersPS[samplerIndex].logicalTextureUnit = d3dUniform->mSamplerData[i];
-                }
+                continue;
             }
-        }
 
-        if (d3dUniform->isReferencedByVertexShader())
-        {
-            unsigned int firstIndex = d3dUniform->vsRegisterIndex;
+            unsigned int firstIndex = d3dUniform->mShaderRegisterIndexes[shaderType];
 
+            std::vector<Sampler> &samplers = mShaderSamplers[shaderType];
             for (int i = 0; i < count; i++)
             {
                 unsigned int samplerIndex = firstIndex + i;
 
-                if (samplerIndex < mSamplersVS.size())
+                if (samplerIndex < samplers.size())
                 {
-                    ASSERT(mSamplersVS[samplerIndex].active);
-                    mSamplersVS[samplerIndex].logicalTextureUnit = d3dUniform->mSamplerData[i];
-                }
-            }
-        }
-
-        if (d3dUniform->isReferencedByComputeShader())
-        {
-            unsigned int firstIndex = d3dUniform->csRegisterIndex;
-
-            for (int i = 0; i < count; i++)
-            {
-                unsigned int samplerIndex = firstIndex + i;
-
-                if (samplerIndex < mSamplersCS.size())
-                {
-                    ASSERT(mSamplersCS[samplerIndex].active);
-                    mSamplersCS[samplerIndex].logicalTextureUnit = d3dUniform->mSamplerData[i];
+                    ASSERT(samplers[samplerIndex].active);
+                    samplers[samplerIndex].logicalTextureUnit = d3dUniform->mSamplerData[i];
                 }
             }
         }
@@ -824,7 +875,7 @@ GLint ProgramD3D::getImageMapping(gl::ShaderType type,
     ASSERT(imageIndex < caps.maxImageUnits);
     switch (type)
     {
-        case gl::SHADER_COMPUTE:
+        case gl::ShaderType::Compute:
             if (readonly && imageIndex < mReadonlyImagesCS.size() &&
                 mReadonlyImagesCS[imageIndex].active)
             {
@@ -848,23 +899,108 @@ GLint ProgramD3D::getImageMapping(gl::ShaderType type,
     return -1;
 }
 
-GLuint ProgramD3D::getUsedImageRange(gl::ShaderType type, bool readonly) const
+gl::RangeUI ProgramD3D::getUsedImageRange(gl::ShaderType type, bool readonly) const
 {
     switch (type)
     {
-        case gl::SHADER_COMPUTE:
+        case gl::ShaderType::Compute:
             return readonly ? mUsedComputeReadonlyImageRange : mUsedComputeImageRange;
-        // TODO(xinghua.cao@intel.com): add image range of vertex shader and pixel shader.
+        // TODO(xinghua.cao@intel.com): add real image range of vertex shader and pixel shader.
+        case gl::ShaderType::Vertex:
+        case gl::ShaderType::Fragment:
+            return {0, 0};
         default:
             UNREACHABLE();
-            return 0u;
+            return {0, 0};
     }
 }
 
-gl::LinkResult ProgramD3D::load(const gl::Context *context,
-                                gl::InfoLog &infoLog,
-                                gl::BinaryInputStream *stream)
+class ProgramD3D::LoadBinaryTask : public ProgramD3D::GetExecutableTask
 {
+  public:
+    LoadBinaryTask(const gl::Context *context,
+                   ProgramD3D *program,
+                   gl::BinaryInputStream *stream,
+                   gl::InfoLog &infoLog)
+        : ProgramD3D::GetExecutableTask(program),
+          mContext(context),
+          mProgram(program),
+          mInfoLog(infoLog)
+    {
+        ASSERT(mContext);
+        ASSERT(mProgram);
+        ASSERT(stream);
+
+        // Copy the remaining data from the stream locally so that the client can't modify it when
+        // loading off thread.
+        size_t dataSize    = stream->remainingSize();
+        mDataCopySucceeded = mStreamData.resize(dataSize);
+        if (mDataCopySucceeded)
+        {
+            memcpy(mStreamData.data(), stream->data() + stream->offset(), dataSize);
+        }
+    }
+
+    angle::Result run() override
+    {
+        if (!mDataCopySucceeded)
+        {
+            mInfoLog << "Failed to copy program binary data to local buffer.";
+            return angle::Result::Stop;
+        }
+
+        gl::BinaryInputStream stream(mStreamData.data(), mStreamData.size());
+        return mProgram->loadBinaryShaderExecutables(mContext, &stream, mInfoLog);
+    }
+
+  private:
+    const gl::Context *mContext;
+    ProgramD3D *mProgram;
+    gl::InfoLog &mInfoLog;
+
+    bool mDataCopySucceeded;
+    angle::MemoryBuffer mStreamData;
+};
+
+class ProgramD3D::LoadBinaryLinkEvent final : public LinkEvent
+{
+  public:
+    LoadBinaryLinkEvent(std::shared_ptr<WorkerThreadPool> workerPool,
+                        const gl::Context *context,
+                        ProgramD3D *program,
+                        gl::BinaryInputStream *stream,
+                        gl::InfoLog &infoLog)
+        : mTask(std::make_shared<ProgramD3D::LoadBinaryTask>(context, program, stream, infoLog)),
+          mWaitableEvent(workerPool->postWorkerTask(mTask))
+    {}
+
+    angle::Result wait(const gl::Context *context) override
+    {
+        mWaitableEvent->wait();
+
+        // Continue and Incomplete are not errors. For Stop, pass the error to the ContextD3D.
+        if (mTask->getResult() != angle::Result::Stop)
+        {
+            return angle::Result::Continue;
+        }
+
+        ContextD3D *contextD3D = GetImplAs<ContextD3D>(context);
+        mTask->popError(contextD3D);
+        return angle::Result::Stop;
+    }
+
+    bool isLinking() override { return !mWaitableEvent->isReady(); }
+
+  private:
+    std::shared_ptr<ProgramD3D::LoadBinaryTask> mTask;
+    std::shared_ptr<WaitableEvent> mWaitableEvent;
+};
+
+std::unique_ptr<rx::LinkEvent> ProgramD3D::load(const gl::Context *context,
+                                                gl::BinaryInputStream *stream,
+                                                gl::InfoLog &infoLog)
+{
+
     // TODO(jmadill): Use Renderer from contextImpl.
 
     reset();
@@ -877,14 +1013,14 @@ gl::LinkResult ProgramD3D::load(const gl::Context *context,
     if (memcmp(&identifier, &binaryDeviceIdentifier, sizeof(DeviceIdentifier)) != 0)
     {
         infoLog << "Invalid program binary, device configuration has changed.";
-        return false;
+        return std::make_unique<LinkEventDone>(angle::Result::Incomplete);
     }
 
     int compileFlags = stream->readInt<int>();
     if (compileFlags != ANGLE_COMPILE_OPTIMIZATION_LEVEL)
     {
         infoLog << "Mismatched compilation flags.";
-        return false;
+        return std::make_unique<LinkEventDone>(angle::Result::Incomplete);
     }
 
     for (int &index : mAttribLocationToD3DSemantic)
@@ -892,33 +1028,22 @@ gl::LinkResult ProgramD3D::load(const gl::Context *context,
         stream->readInt(&index);
     }
 
-    const unsigned int psSamplerCount = stream->readInt<unsigned int>();
-    for (unsigned int i = 0; i < psSamplerCount; ++i)
+    for (gl::ShaderType shaderType : gl::AllShaderTypes())
     {
-        Sampler sampler;
-        stream->readBool(&sampler.active);
-        stream->readInt(&sampler.logicalTextureUnit);
-        stream->readInt(&sampler.textureType);
-        mSamplersPS.push_back(sampler);
-    }
-    const unsigned int vsSamplerCount = stream->readInt<unsigned int>();
-    for (unsigned int i = 0; i < vsSamplerCount; ++i)
-    {
-        Sampler sampler;
-        stream->readBool(&sampler.active);
-        stream->readInt(&sampler.logicalTextureUnit);
-        stream->readInt(&sampler.textureType);
-        mSamplersVS.push_back(sampler);
-    }
+        const unsigned int samplerCount = stream->readInt<unsigned int>();
+        for (unsigned int i = 0; i < samplerCount; ++i)
+        {
+            Sampler sampler;
+            stream->readBool(&sampler.active);
+            stream->readInt(&sampler.logicalTextureUnit);
+            stream->readEnum(&sampler.textureType);
+            mShaderSamplers[shaderType].push_back(sampler);
+        }
 
-    const unsigned int csSamplerCount = stream->readInt<unsigned int>();
-    for (unsigned int i = 0; i < csSamplerCount; ++i)
-    {
-        Sampler sampler;
-        stream->readBool(&sampler.active);
-        stream->readInt(&sampler.logicalTextureUnit);
-        stream->readInt(&sampler.textureType);
-        mSamplersCS.push_back(sampler);
+        unsigned int samplerRangeLow, samplerRangeHigh;
+        stream->readInt(&samplerRangeLow);
+        stream->readInt(&samplerRangeHigh);
+        mUsedShaderSamplerRanges[shaderType] = gl::RangeUI(samplerRangeLow, samplerRangeHigh);
     }
 
     const unsigned int csImageCount = stream->readInt<unsigned int>();
@@ -939,17 +1064,50 @@ gl::LinkResult ProgramD3D::load(const gl::Context *context,
         mReadonlyImagesCS.push_back(image);
     }
 
-    stream->readInt(&mUsedVertexSamplerRange);
-    stream->readInt(&mUsedPixelSamplerRange);
-    stream->readInt(&mUsedComputeSamplerRange);
-    stream->readInt(&mUsedComputeImageRange);
-    stream->readInt(&mUsedComputeReadonlyImageRange);
+    unsigned int computeImageRangeLow, computeImageRangeHigh, computeReadonlyImageRangeLow,
+        computeReadonlyImageRangeHigh;
+    stream->readInt(&computeImageRangeLow);
+    stream->readInt(&computeImageRangeHigh);
+    stream->readInt(&computeReadonlyImageRangeLow);
+    stream->readInt(&computeReadonlyImageRangeHigh);
+    mUsedComputeImageRange = gl::RangeUI(computeImageRangeLow, computeImageRangeHigh);
+    mUsedComputeReadonlyImageRange =
+        gl::RangeUI(computeReadonlyImageRangeLow, computeReadonlyImageRangeHigh);
+
+    unsigned int atomicCounterRangeLow, atomicCounterRangeHigh;
+    stream->readInt(&atomicCounterRangeLow);
+    stream->readInt(&atomicCounterRangeHigh);
+    mUsedComputeAtomicCounterRange = gl::RangeUI(atomicCounterRangeLow, atomicCounterRangeHigh);
+
+    const unsigned int shaderStorageBlockCount = stream->readInt<unsigned int>();
+    if (stream->error())
+    {
+        infoLog << "Invalid program binary.";
+        return std::make_unique<LinkEventDone>(angle::Result::Incomplete);
+    }
+
+    ASSERT(mD3DShaderStorageBlocks.empty());
+    for (unsigned int blockIndex = 0; blockIndex < shaderStorageBlockCount; ++blockIndex)
+    {
+        D3DInterfaceBlock shaderStorageBlock;
+        for (gl::ShaderType shaderType : gl::AllShaderTypes())
+        {
+            stream->readInt(&shaderStorageBlock.mShaderRegisterIndexes[shaderType]);
+        }
+        mD3DShaderStorageBlocks.push_back(shaderStorageBlock);
+    }
+
+    for (unsigned int ii = 0; ii < gl::IMPLEMENTATION_MAX_ATOMIC_COUNTER_BUFFERS; ++ii)
+    {
+        unsigned int index                             = stream->readInt<unsigned int>();
+        mComputeAtomicCounterBufferRegisterIndices[ii] = index;
+    }
 
     const unsigned int uniformCount = stream->readInt<unsigned int>();
     if (stream->error())
     {
         infoLog << "Invalid program binary.";
-        return false;
+        return std::make_unique<LinkEventDone>(angle::Result::Incomplete);
     }
 
     const auto &linkedUniforms = mState.getUniforms();
@@ -962,9 +1120,10 @@ gl::LinkResult ProgramD3D::load(const gl::Context *context,
             new D3DUniform(linkedUniform.type, HLSLRegisterType::None, linkedUniform.name,
                            linkedUniform.arraySizes, linkedUniform.isInDefaultBlock());
         stream->readInt<HLSLRegisterType>(&d3dUniform->regType);
-        stream->readInt(&d3dUniform->psRegisterIndex);
-        stream->readInt(&d3dUniform->vsRegisterIndex);
-        stream->readInt(&d3dUniform->csRegisterIndex);
+        for (gl::ShaderType shaderType : gl::AllShaderTypes())
+        {
+            stream->readInt(&d3dUniform->mShaderRegisterIndexes[shaderType]);
+        }
         stream->readInt(&d3dUniform->registerCount);
         stream->readInt(&d3dUniform->registerElement);
 
@@ -975,16 +1134,17 @@ gl::LinkResult ProgramD3D::load(const gl::Context *context,
     if (stream->error())
     {
         infoLog << "Invalid program binary.";
-        return false;
+        return std::make_unique<LinkEventDone>(angle::Result::Incomplete);
     }
 
     ASSERT(mD3DUniformBlocks.empty());
     for (unsigned int blockIndex = 0; blockIndex < blockCount; ++blockIndex)
     {
-        D3DUniformBlock uniformBlock;
-        stream->readInt(&uniformBlock.psRegisterIndex);
-        stream->readInt(&uniformBlock.vsRegisterIndex);
-        stream->readInt(&uniformBlock.csRegisterIndex);
+        D3DInterfaceBlock uniformBlock;
+        for (gl::ShaderType shaderType : gl::AllShaderTypes())
+        {
+            stream->readInt(&uniformBlock.mShaderRegisterIndexes[shaderType]);
+        }
         mD3DUniformBlocks.push_back(uniformBlock);
     }
 
@@ -1000,12 +1160,13 @@ gl::LinkResult ProgramD3D::load(const gl::Context *context,
         stream->readInt(&varying->outputSlot);
     }
 
-    stream->readString(&mVertexHLSL);
-    stream->readBytes(reinterpret_cast<unsigned char *>(&mVertexWorkarounds),
-                      sizeof(angle::CompilerWorkaroundsD3D));
-    stream->readString(&mPixelHLSL);
-    stream->readBytes(reinterpret_cast<unsigned char *>(&mPixelWorkarounds),
-                      sizeof(angle::CompilerWorkaroundsD3D));
+    for (gl::ShaderType shaderType : gl::AllShaderTypes())
+    {
+        stream->readString(&mShaderHLSL[shaderType]);
+        stream->readBytes(reinterpret_cast<unsigned char *>(&mShaderWorkarounds[shaderType]),
+                          sizeof(angle::CompilerWorkaroundsD3D));
+    }
+
     stream->readBool(&mUsesFragDepth);
     stream->readBool(&mHasANGLEMultiviewEnabled);
     stream->readBool(&mUsesViewID);
@@ -1020,25 +1181,36 @@ gl::LinkResult ProgramD3D::load(const gl::Context *context,
         stream->readInt(&mPixelShaderKey[pixelShaderKeyIndex].type);
         stream->readString(&mPixelShaderKey[pixelShaderKeyIndex].name);
         stream->readString(&mPixelShaderKey[pixelShaderKeyIndex].source);
+        stream->readInt(&mPixelShaderKey[pixelShaderKeyIndex].outputLocation);
         stream->readInt(&mPixelShaderKey[pixelShaderKeyIndex].outputIndex);
     }
 
     stream->readString(&mGeometryShaderPreamble);
 
+    return std::make_unique<LoadBinaryLinkEvent>(context->getWorkerThreadPool(), context, this,
+                                                 stream, infoLog);
+}
+
+angle::Result ProgramD3D::loadBinaryShaderExecutables(const gl::Context *context,
+                                                      gl::BinaryInputStream *stream,
+                                                      gl::InfoLog &infoLog)
+{
     const unsigned char *binary = reinterpret_cast<const unsigned char *>(stream->data());
 
     bool separateAttribs = (mState.getTransformFeedbackBufferMode() == GL_SEPARATE_ATTRIBS);
+
+    d3d::Context *contextD3D = GetImplAs<ContextD3D>(context);
 
     const unsigned int vertexShaderCount = stream->readInt<unsigned int>();
     for (unsigned int vertexShaderIndex = 0; vertexShaderIndex < vertexShaderCount;
          vertexShaderIndex++)
     {
         size_t inputLayoutSize = stream->readInt<size_t>();
-        gl::InputLayout inputLayout(inputLayoutSize, gl::VERTEX_FORMAT_INVALID);
+        gl::InputLayout inputLayout(inputLayoutSize, angle::FormatID::NONE);
 
         for (size_t inputIndex = 0; inputIndex < inputLayoutSize; inputIndex++)
         {
-            inputLayout[inputIndex] = stream->readInt<gl::VertexFormatType>();
+            inputLayout[inputIndex] = stream->readInt<angle::FormatID>();
         }
 
         unsigned int vertexShaderSize             = stream->readInt<unsigned int>();
@@ -1046,14 +1218,14 @@ gl::LinkResult ProgramD3D::load(const gl::Context *context,
 
         ShaderExecutableD3D *shaderExecutable = nullptr;
 
-        ANGLE_TRY(mRenderer->loadExecutable(vertexShaderFunction, vertexShaderSize,
-                                            gl::SHADER_VERTEX, mStreamOutVaryings, separateAttribs,
-                                            &shaderExecutable));
+        ANGLE_TRY(mRenderer->loadExecutable(contextD3D, vertexShaderFunction, vertexShaderSize,
+                                            gl::ShaderType::Vertex, mStreamOutVaryings,
+                                            separateAttribs, &shaderExecutable));
 
         if (!shaderExecutable)
         {
             infoLog << "Could not create vertex shader.";
-            return false;
+            return angle::Result::Incomplete;
         }
 
         // generated converted input layout
@@ -1081,14 +1253,14 @@ gl::LinkResult ProgramD3D::load(const gl::Context *context,
         const unsigned char *pixelShaderFunction = binary + stream->offset();
         ShaderExecutableD3D *shaderExecutable    = nullptr;
 
-        ANGLE_TRY(mRenderer->loadExecutable(pixelShaderFunction, pixelShaderSize,
-                                            gl::SHADER_FRAGMENT, mStreamOutVaryings,
+        ANGLE_TRY(mRenderer->loadExecutable(contextD3D, pixelShaderFunction, pixelShaderSize,
+                                            gl::ShaderType::Fragment, mStreamOutVaryings,
                                             separateAttribs, &shaderExecutable));
 
         if (!shaderExecutable)
         {
             infoLog << "Could not create pixel shader.";
-            return false;
+            return angle::Result::Incomplete;
         }
 
         // add new binary
@@ -1098,8 +1270,7 @@ gl::LinkResult ProgramD3D::load(const gl::Context *context,
         stream->skip(pixelShaderSize);
     }
 
-    for (unsigned int geometryExeIndex = 0; geometryExeIndex < gl::PRIMITIVE_TYPE_MAX;
-         ++geometryExeIndex)
+    for (auto &geometryExe : mGeometryExecutables)
     {
         unsigned int geometryShaderSize = stream->readInt<unsigned int>();
         if (geometryShaderSize == 0)
@@ -1110,43 +1281,69 @@ gl::LinkResult ProgramD3D::load(const gl::Context *context,
         const unsigned char *geometryShaderFunction = binary + stream->offset();
 
         ShaderExecutableD3D *geometryExecutable = nullptr;
-        ANGLE_TRY(mRenderer->loadExecutable(geometryShaderFunction, geometryShaderSize,
-                                            gl::SHADER_GEOMETRY, mStreamOutVaryings,
+        ANGLE_TRY(mRenderer->loadExecutable(contextD3D, geometryShaderFunction, geometryShaderSize,
+                                            gl::ShaderType::Geometry, mStreamOutVaryings,
                                             separateAttribs, &geometryExecutable));
 
         if (!geometryExecutable)
         {
             infoLog << "Could not create geometry shader.";
-            return false;
+            return angle::Result::Incomplete;
         }
 
-        mGeometryExecutables[geometryExeIndex].reset(geometryExecutable);
+        geometryExe.reset(geometryExecutable);
 
         stream->skip(geometryShaderSize);
     }
 
-    unsigned int computeShaderSize = stream->readInt<unsigned int>();
-    if (computeShaderSize > 0)
+    const size_t computeShaderCount = stream->readInt<unsigned int>();
+    for (size_t computeShaderIndex = 0; computeShaderIndex < computeShaderCount;
+         computeShaderIndex++)
     {
+        const size_t signatureCount = stream->readInt<unsigned int>();
+        gl::ImageUnitTextureTypeMap signatures;
+        for (size_t signatureIndex = 0; signatureIndex < signatureCount; signatureIndex++)
+        {
+            unsigned int imageUint;
+            gl::TextureType textureType;
+            stream->readInt<unsigned int>(&imageUint);
+            stream->readInt<gl::TextureType>(&textureType);
+            signatures.insert(std::pair<unsigned int, gl::TextureType>(imageUint, textureType));
+        }
+
+        const size_t computeShaderSize             = stream->readInt<unsigned int>();
         const unsigned char *computeShaderFunction = binary + stream->offset();
 
         ShaderExecutableD3D *computeExecutable = nullptr;
-        ANGLE_TRY(mRenderer->loadExecutable(computeShaderFunction, computeShaderSize,
-                                            gl::SHADER_COMPUTE, std::vector<D3DVarying>(), false,
-                                            &computeExecutable));
+        ANGLE_TRY(mRenderer->loadExecutable(contextD3D, computeShaderFunction, computeShaderSize,
+                                            gl::ShaderType::Compute, std::vector<D3DVarying>(),
+                                            false, &computeExecutable));
 
         if (!computeExecutable)
         {
             infoLog << "Could not create compute shader.";
-            return false;
+            return angle::Result::Incomplete;
         }
 
-        mComputeExecutable.reset(computeExecutable);
+        // add new binary
+        mComputeExecutables.push_back(std::unique_ptr<ComputeExecutable>(new ComputeExecutable(
+            signatures, std::unique_ptr<ShaderExecutableD3D>(computeExecutable))));
+
+        stream->skip(computeShaderSize);
     }
 
-    initializeUniformStorage();
+    const size_t bindLayoutCount = stream->readInt<unsigned int>();
+    for (size_t bindLayoutIndex = 0; bindLayoutIndex < bindLayoutCount; bindLayoutIndex++)
+    {
+        mComputeShaderImage2DBindLayoutCache.insert(std::pair<unsigned int, gl::TextureType>(
+            stream->readInt<unsigned int>(), gl::TextureType::_2D));
+    }
 
-    return true;
+    initializeUniformStorage(mState.getLinkedShaderStages());
+
+    dirtyAllUniforms();
+
+    return angle::Result::Continue;
 }
 
 void ProgramD3D::save(const gl::Context *context, gl::BinaryOutputStream *stream)
@@ -1165,28 +1362,18 @@ void ProgramD3D::save(const gl::Context *context, gl::BinaryOutputStream *stream
         stream->writeInt(d3dSemantic);
     }
 
-    stream->writeInt(mSamplersPS.size());
-    for (unsigned int i = 0; i < mSamplersPS.size(); ++i)
+    for (gl::ShaderType shaderType : gl::AllShaderTypes())
     {
-        stream->writeInt(mSamplersPS[i].active);
-        stream->writeInt(mSamplersPS[i].logicalTextureUnit);
-        stream->writeInt(mSamplersPS[i].textureType);
-    }
+        stream->writeInt(mShaderSamplers[shaderType].size());
+        for (unsigned int i = 0; i < mShaderSamplers[shaderType].size(); ++i)
+        {
+            stream->writeInt(mShaderSamplers[shaderType][i].active);
+            stream->writeInt(mShaderSamplers[shaderType][i].logicalTextureUnit);
+            stream->writeEnum(mShaderSamplers[shaderType][i].textureType);
+        }
 
-    stream->writeInt(mSamplersVS.size());
-    for (unsigned int i = 0; i < mSamplersVS.size(); ++i)
-    {
-        stream->writeInt(mSamplersVS[i].active);
-        stream->writeInt(mSamplersVS[i].logicalTextureUnit);
-        stream->writeInt(mSamplersVS[i].textureType);
-    }
-
-    stream->writeInt(mSamplersCS.size());
-    for (unsigned int i = 0; i < mSamplersCS.size(); ++i)
-    {
-        stream->writeInt(mSamplersCS[i].active);
-        stream->writeInt(mSamplersCS[i].logicalTextureUnit);
-        stream->writeInt(mSamplersCS[i].textureType);
+        stream->writeInt(mUsedShaderSamplerRanges[shaderType].low());
+        stream->writeInt(mUsedShaderSamplerRanges[shaderType].high());
     }
 
     stream->writeInt(mImagesCS.size());
@@ -1203,30 +1390,47 @@ void ProgramD3D::save(const gl::Context *context, gl::BinaryOutputStream *stream
         stream->writeInt(mReadonlyImagesCS[i].logicalImageUnit);
     }
 
-    stream->writeInt(mUsedVertexSamplerRange);
-    stream->writeInt(mUsedPixelSamplerRange);
-    stream->writeInt(mUsedComputeSamplerRange);
-    stream->writeInt(mUsedComputeImageRange);
-    stream->writeInt(mUsedComputeReadonlyImageRange);
+    stream->writeInt(mUsedComputeImageRange.low());
+    stream->writeInt(mUsedComputeImageRange.high());
+    stream->writeInt(mUsedComputeReadonlyImageRange.low());
+    stream->writeInt(mUsedComputeReadonlyImageRange.high());
+    stream->writeInt(mUsedComputeAtomicCounterRange.low());
+    stream->writeInt(mUsedComputeAtomicCounterRange.high());
+
+    stream->writeInt(mD3DShaderStorageBlocks.size());
+    for (const D3DInterfaceBlock &shaderStorageBlock : mD3DShaderStorageBlocks)
+    {
+        for (gl::ShaderType shaderType : gl::AllShaderTypes())
+        {
+            stream->writeIntOrNegOne(shaderStorageBlock.mShaderRegisterIndexes[shaderType]);
+        }
+    }
+
+    for (unsigned int ii = 0; ii < gl::IMPLEMENTATION_MAX_ATOMIC_COUNTER_BUFFERS; ++ii)
+    {
+        stream->writeInt(mComputeAtomicCounterBufferRegisterIndices[ii]);
+    }
 
     stream->writeInt(mD3DUniforms.size());
     for (const D3DUniform *uniform : mD3DUniforms)
     {
         // Type, name and arraySize are redundant, so aren't stored in the binary.
         stream->writeInt(static_cast<unsigned int>(uniform->regType));
-        stream->writeIntOrNegOne(uniform->psRegisterIndex);
-        stream->writeIntOrNegOne(uniform->vsRegisterIndex);
-        stream->writeIntOrNegOne(uniform->csRegisterIndex);
+        for (gl::ShaderType shaderType : gl::AllShaderTypes())
+        {
+            stream->writeIntOrNegOne(uniform->mShaderRegisterIndexes[shaderType]);
+        }
         stream->writeInt(uniform->registerCount);
         stream->writeInt(uniform->registerElement);
     }
 
     stream->writeInt(mD3DUniformBlocks.size());
-    for (const D3DUniformBlock &uniformBlock : mD3DUniformBlocks)
+    for (const D3DInterfaceBlock &uniformBlock : mD3DUniformBlocks)
     {
-        stream->writeIntOrNegOne(uniformBlock.psRegisterIndex);
-        stream->writeIntOrNegOne(uniformBlock.vsRegisterIndex);
-        stream->writeIntOrNegOne(uniformBlock.csRegisterIndex);
+        for (gl::ShaderType shaderType : gl::AllShaderTypes())
+        {
+            stream->writeIntOrNegOne(uniformBlock.mShaderRegisterIndexes[shaderType]);
+        }
     }
 
     stream->writeInt(mStreamOutVaryings.size());
@@ -1238,12 +1442,13 @@ void ProgramD3D::save(const gl::Context *context, gl::BinaryOutputStream *stream
         stream->writeInt(varying.outputSlot);
     }
 
-    stream->writeString(mVertexHLSL);
-    stream->writeBytes(reinterpret_cast<unsigned char *>(&mVertexWorkarounds),
-                       sizeof(angle::CompilerWorkaroundsD3D));
-    stream->writeString(mPixelHLSL);
-    stream->writeBytes(reinterpret_cast<unsigned char *>(&mPixelWorkarounds),
-                       sizeof(angle::CompilerWorkaroundsD3D));
+    for (gl::ShaderType shaderType : gl::AllShaderTypes())
+    {
+        stream->writeString(mShaderHLSL[shaderType]);
+        stream->writeBytes(reinterpret_cast<unsigned char *>(&mShaderWorkarounds[shaderType]),
+                           sizeof(angle::CompilerWorkaroundsD3D));
+    }
+
     stream->writeInt(mUsesFragDepth);
     stream->writeInt(mHasANGLEMultiviewEnabled);
     stream->writeInt(mUsesViewID);
@@ -1259,6 +1464,7 @@ void ProgramD3D::save(const gl::Context *context, gl::BinaryOutputStream *stream
         stream->writeInt(variable.type);
         stream->writeString(variable.name);
         stream->writeString(variable.source);
+        stream->writeInt(variable.outputLocation);
         stream->writeInt(variable.outputIndex);
     }
 
@@ -1318,37 +1524,52 @@ void ProgramD3D::save(const gl::Context *context, gl::BinaryOutputStream *stream
         stream->writeBytes(geometryExecutable->getFunction(), geometryShaderSize);
     }
 
-    if (mComputeExecutable)
+    stream->writeInt(mComputeExecutables.size());
+    for (size_t computeExecutableIndex = 0; computeExecutableIndex < mComputeExecutables.size();
+         computeExecutableIndex++)
     {
-        size_t computeShaderSize = mComputeExecutable->getLength();
+        ComputeExecutable *computeExecutable = mComputeExecutables[computeExecutableIndex].get();
+
+        const gl::ImageUnitTextureTypeMap signatures = computeExecutable->signature();
+        stream->writeInt(signatures.size());
+        for (const auto &signature : signatures)
+        {
+            stream->writeInt(signature.first);
+            stream->writeInt(static_cast<unsigned int>(signature.second));
+        }
+
+        size_t computeShaderSize = computeExecutable->shaderExecutable()->getLength();
         stream->writeInt(computeShaderSize);
-        stream->writeBytes(mComputeExecutable->getFunction(), computeShaderSize);
+
+        const uint8_t *computeBlob = computeExecutable->shaderExecutable()->getFunction();
+        stream->writeBytes(computeBlob, computeShaderSize);
     }
-    else
+
+    stream->writeInt(mComputeShaderImage2DBindLayoutCache.size());
+    for (auto &image2DBindLayout : mComputeShaderImage2DBindLayoutCache)
     {
-        stream->writeInt(0);
+        stream->writeInt(image2DBindLayout.first);
     }
 }
 
-void ProgramD3D::setBinaryRetrievableHint(bool /* retrievable */)
-{
-}
+void ProgramD3D::setBinaryRetrievableHint(bool /* retrievable */) {}
 
-void ProgramD3D::setSeparable(bool /* separable */)
-{
-}
+void ProgramD3D::setSeparable(bool /* separable */) {}
 
-gl::Error ProgramD3D::getPixelExecutableForCachedOutputLayout(ShaderExecutableD3D **outExecutable,
-                                                              gl::InfoLog *infoLog)
+angle::Result ProgramD3D::getPixelExecutableForCachedOutputLayout(
+    d3d::Context *context,
+    ShaderExecutableD3D **outExecutable,
+    gl::InfoLog *infoLog)
 {
     if (mCachedPixelExecutableIndex.valid())
     {
         *outExecutable = mPixelExecutables[mCachedPixelExecutableIndex.value()]->shaderExecutable();
-        return gl::NoError();
+        return angle::Result::Continue;
     }
 
     std::string finalPixelHLSL = mDynamicHLSL->generatePixelShaderForOutputSignature(
-        mPixelHLSL, mPixelShaderKey, mUsesFragDepth, mPixelShaderOutputLayoutCache);
+        mShaderHLSL[gl::ShaderType::Fragment], mPixelShaderKey, mUsesFragDepth,
+        mPixelShaderOutputLayoutCache);
 
     // Generate new pixel executable
     ShaderExecutableD3D *pixelExecutable = nullptr;
@@ -1357,9 +1578,9 @@ gl::Error ProgramD3D::getPixelExecutableForCachedOutputLayout(ShaderExecutableD3
     gl::InfoLog *currentInfoLog = infoLog ? infoLog : &tempInfoLog;
 
     ANGLE_TRY(mRenderer->compileToExecutable(
-        *currentInfoLog, finalPixelHLSL, gl::SHADER_FRAGMENT, mStreamOutVaryings,
-        (mState.getTransformFeedbackBufferMode() == GL_SEPARATE_ATTRIBS), mPixelWorkarounds,
-        &pixelExecutable));
+        context, *currentInfoLog, finalPixelHLSL, gl::ShaderType::Fragment, mStreamOutVaryings,
+        (mState.getTransformFeedbackBufferMode() == GL_SEPARATE_ATTRIBS),
+        mShaderWorkarounds[gl::ShaderType::Fragment], &pixelExecutable));
 
     if (pixelExecutable)
     {
@@ -1374,22 +1595,24 @@ gl::Error ProgramD3D::getPixelExecutableForCachedOutputLayout(ShaderExecutableD3
     }
 
     *outExecutable = pixelExecutable;
-    return gl::NoError();
+    return angle::Result::Continue;
 }
 
-gl::Error ProgramD3D::getVertexExecutableForCachedInputLayout(ShaderExecutableD3D **outExectuable,
-                                                              gl::InfoLog *infoLog)
+angle::Result ProgramD3D::getVertexExecutableForCachedInputLayout(
+    d3d::Context *context,
+    ShaderExecutableD3D **outExectuable,
+    gl::InfoLog *infoLog)
 {
     if (mCachedVertexExecutableIndex.valid())
     {
         *outExectuable =
             mVertexExecutables[mCachedVertexExecutableIndex.value()]->shaderExecutable();
-        return gl::NoError();
+        return angle::Result::Continue;
     }
 
     // Generate new dynamic layout with attribute conversions
     std::string finalVertexHLSL = mDynamicHLSL->generateVertexShaderForInputLayout(
-        mVertexHLSL, mCachedInputLayout, mState.getAttributes());
+        mShaderHLSL[gl::ShaderType::Vertex], mCachedInputLayout, mState.getAttributes());
 
     // Generate new vertex executable
     ShaderExecutableD3D *vertexExecutable = nullptr;
@@ -1398,9 +1621,9 @@ gl::Error ProgramD3D::getVertexExecutableForCachedInputLayout(ShaderExecutableD3
     gl::InfoLog *currentInfoLog = infoLog ? infoLog : &tempInfoLog;
 
     ANGLE_TRY(mRenderer->compileToExecutable(
-        *currentInfoLog, finalVertexHLSL, gl::SHADER_VERTEX, mStreamOutVaryings,
-        (mState.getTransformFeedbackBufferMode() == GL_SEPARATE_ATTRIBS), mVertexWorkarounds,
-        &vertexExecutable));
+        context, *currentInfoLog, finalVertexHLSL, gl::ShaderType::Vertex, mStreamOutVaryings,
+        (mState.getTransformFeedbackBufferMode() == GL_SEPARATE_ATTRIBS),
+        mShaderWorkarounds[gl::ShaderType::Vertex], &vertexExecutable));
 
     if (vertexExecutable)
     {
@@ -1415,13 +1638,14 @@ gl::Error ProgramD3D::getVertexExecutableForCachedInputLayout(ShaderExecutableD3
     }
 
     *outExectuable = vertexExecutable;
-    return gl::NoError();
+    return angle::Result::Continue;
 }
 
-gl::Error ProgramD3D::getGeometryExecutableForPrimitiveType(const gl::Context *context,
-                                                            GLenum drawMode,
-                                                            ShaderExecutableD3D **outExecutable,
-                                                            gl::InfoLog *infoLog)
+angle::Result ProgramD3D::getGeometryExecutableForPrimitiveType(d3d::Context *context,
+                                                                const gl::State &state,
+                                                                gl::PrimitiveMode drawMode,
+                                                                ShaderExecutableD3D **outExecutable,
+                                                                gl::InfoLog *infoLog)
 {
     if (outExecutable)
     {
@@ -1429,12 +1653,12 @@ gl::Error ProgramD3D::getGeometryExecutableForPrimitiveType(const gl::Context *c
     }
 
     // Return a null shader if the current rendering doesn't use a geometry shader
-    if (!usesGeometryShader(drawMode))
+    if (!usesGeometryShader(state, drawMode))
     {
-        return gl::NoError();
+        return angle::Result::Continue;
     }
 
-    gl::PrimitiveType geometryShaderType = GetGeometryShaderTypeFromDrawMode(drawMode);
+    gl::PrimitiveMode geometryShaderType = GetGeometryShaderTypeFromDrawMode(drawMode);
 
     if (mGeometryExecutables[geometryShaderType])
     {
@@ -1442,11 +1666,11 @@ gl::Error ProgramD3D::getGeometryExecutableForPrimitiveType(const gl::Context *c
         {
             *outExecutable = mGeometryExecutables[geometryShaderType].get();
         }
-        return gl::NoError();
+        return angle::Result::Continue;
     }
-
+    const gl::Caps &caps     = state.getCaps();
     std::string geometryHLSL = mDynamicHLSL->generateGeometryShaderHLSL(
-        context, geometryShaderType, mState, mRenderer->presentPathFastEnabled(),
+        caps, geometryShaderType, mState, mRenderer->presentPathFastEnabled(),
         mHasANGLEMultiviewEnabled, mRenderer->canSelectViewInVertexShader(),
         usesGeometryShaderForPointSpriteEmulation(), mGeometryShaderPreamble);
 
@@ -1454,12 +1678,12 @@ gl::Error ProgramD3D::getGeometryExecutableForPrimitiveType(const gl::Context *c
     gl::InfoLog *currentInfoLog = infoLog ? infoLog : &tempInfoLog;
 
     ShaderExecutableD3D *geometryExecutable = nullptr;
-    gl::Error error                         = mRenderer->compileToExecutable(
-        *currentInfoLog, geometryHLSL, gl::SHADER_GEOMETRY, mStreamOutVaryings,
+    angle::Result result                    = mRenderer->compileToExecutable(
+        context, *currentInfoLog, geometryHLSL, gl::ShaderType::Geometry, mStreamOutVaryings,
         (mState.getTransformFeedbackBufferMode() == GL_SEPARATE_ATTRIBS),
         angle::CompilerWorkaroundsD3D(), &geometryExecutable);
 
-    if (!infoLog && error.isError())
+    if (!infoLog && result == angle::Result::Stop)
     {
         ERR() << "Error compiling dynamic geometry executable:" << std::endl
               << tempInfoLog.str() << std::endl;
@@ -1474,55 +1698,27 @@ gl::Error ProgramD3D::getGeometryExecutableForPrimitiveType(const gl::Context *c
     {
         *outExecutable = mGeometryExecutables[geometryShaderType].get();
     }
-    return error;
+    return result;
 }
-
-class ProgramD3D::GetExecutableTask : public Closure
-{
-  public:
-    GetExecutableTask(ProgramD3D *program)
-        : mProgram(program), mError(gl::NoError()), mInfoLog(), mResult(nullptr)
-    {
-    }
-
-    virtual gl::Error run() = 0;
-
-    void operator()() override { mError = run(); }
-
-    const gl::Error &getError() const { return mError; }
-    const gl::InfoLog &getInfoLog() const { return mInfoLog; }
-    ShaderExecutableD3D *getResult() { return mResult; }
-
-  protected:
-    ProgramD3D *mProgram;
-    gl::Error mError;
-    gl::InfoLog mInfoLog;
-    ShaderExecutableD3D *mResult;
-};
 
 class ProgramD3D::GetVertexExecutableTask : public ProgramD3D::GetExecutableTask
 {
   public:
-    GetVertexExecutableTask(ProgramD3D *program, const gl::Context *context)
-        : GetExecutableTask(program), mContext(context)
+    GetVertexExecutableTask(ProgramD3D *program) : GetExecutableTask(program) {}
+    angle::Result run() override
     {
+        mProgram->updateCachedInputLayoutFromShader();
+
+        ANGLE_TRY(mProgram->getVertexExecutableForCachedInputLayout(this, &mExecutable, &mInfoLog));
+
+        return angle::Result::Continue;
     }
-    gl::Error run() override
-    {
-        mProgram->updateCachedInputLayoutFromShader(mContext);
-
-        ANGLE_TRY(mProgram->getVertexExecutableForCachedInputLayout(&mResult, &mInfoLog));
-
-        return gl::NoError();
-    }
-
-  private:
-    const gl::Context *mContext;
 };
 
-void ProgramD3D::updateCachedInputLayoutFromShader(const gl::Context *context)
+void ProgramD3D::updateCachedInputLayoutFromShader()
 {
-    GetDefaultInputLayoutFromShader(context, mState.getAttachedVertexShader(), &mCachedInputLayout);
+    GetDefaultInputLayoutFromShader(mState.getAttachedShader(gl::ShaderType::Vertex),
+                                    &mCachedInputLayout);
     VertexExecutable::getSignature(mRenderer, mCachedInputLayout, &mCachedVertexSignature);
     updateCachedVertexExecutableIndex();
 }
@@ -1531,13 +1727,13 @@ class ProgramD3D::GetPixelExecutableTask : public ProgramD3D::GetExecutableTask
 {
   public:
     GetPixelExecutableTask(ProgramD3D *program) : GetExecutableTask(program) {}
-    gl::Error run() override
+    angle::Result run() override
     {
         mProgram->updateCachedOutputLayoutFromShader();
 
-        ANGLE_TRY(mProgram->getPixelExecutableForCachedOutputLayout(&mResult, &mInfoLog));
+        ANGLE_TRY(mProgram->getPixelExecutableForCachedOutputLayout(this, &mExecutable, &mInfoLog));
 
-        return gl::NoError();
+        return angle::Result::Continue;
     }
 };
 
@@ -1547,204 +1743,309 @@ void ProgramD3D::updateCachedOutputLayoutFromShader()
     updateCachedPixelExecutableIndex();
 }
 
+void ProgramD3D::updateCachedImage2DBindLayoutFromComputeShader()
+{
+    GetDefaultImage2DBindLayoutFromComputeShader(mImage2DUniforms,
+                                                 &mComputeShaderImage2DBindLayoutCache);
+    updateCachedComputeExecutableIndex();
+}
+
 class ProgramD3D::GetGeometryExecutableTask : public ProgramD3D::GetExecutableTask
 {
   public:
-    GetGeometryExecutableTask(ProgramD3D *program, const gl::Context *context)
-        : GetExecutableTask(program), mContext(context)
-    {
-    }
+    GetGeometryExecutableTask(ProgramD3D *program, const gl::State &state)
+        : GetExecutableTask(program), mState(state)
+    {}
 
-    gl::Error run() override
+    angle::Result run() override
     {
         // Auto-generate the geometry shader here, if we expect to be using point rendering in
         // D3D11.
-        if (mProgram->usesGeometryShader(GL_POINTS))
+        if (mProgram->usesGeometryShader(mState, gl::PrimitiveMode::Points))
         {
-            ANGLE_TRY(mProgram->getGeometryExecutableForPrimitiveType(mContext, GL_POINTS, &mResult,
-                                                                      &mInfoLog));
+            ANGLE_TRY(mProgram->getGeometryExecutableForPrimitiveType(
+                this, mState, gl::PrimitiveMode::Points, &mExecutable, &mInfoLog));
         }
 
-        return gl::NoError();
+        return angle::Result::Continue;
     }
 
   private:
-    const gl::Context *mContext;
+    const gl::State &mState;
 };
 
-gl::Error ProgramD3D::getComputeExecutable(ShaderExecutableD3D **outExecutable)
+// The LinkEvent implementation for linking a rendering(VS, FS, GS) program.
+class ProgramD3D::GraphicsProgramLinkEvent final : public LinkEvent
 {
-    if (outExecutable)
+  public:
+    GraphicsProgramLinkEvent(gl::InfoLog &infoLog,
+                             std::shared_ptr<WorkerThreadPool> workerPool,
+                             std::shared_ptr<ProgramD3D::GetVertexExecutableTask> vertexTask,
+                             std::shared_ptr<ProgramD3D::GetPixelExecutableTask> pixelTask,
+                             std::shared_ptr<ProgramD3D::GetGeometryExecutableTask> geometryTask,
+                             bool useGS,
+                             const ShaderD3D *vertexShader,
+                             const ShaderD3D *fragmentShader)
+        : mInfoLog(infoLog),
+          mWorkerPool(workerPool),
+          mVertexTask(vertexTask),
+          mPixelTask(pixelTask),
+          mGeometryTask(geometryTask),
+          mWaitEvents(
+              {{std::shared_ptr<WaitableEvent>(workerPool->postWorkerTask(mVertexTask)),
+                std::shared_ptr<WaitableEvent>(workerPool->postWorkerTask(mPixelTask)),
+                std::shared_ptr<WaitableEvent>(workerPool->postWorkerTask(mGeometryTask))}}),
+          mUseGS(useGS),
+          mVertexShader(vertexShader),
+          mFragmentShader(fragmentShader)
+    {}
+
+    angle::Result wait(const gl::Context *context) override
     {
-        *outExecutable = mComputeExecutable.get();
+        WaitableEvent::WaitMany(&mWaitEvents);
+
+        ANGLE_TRY(checkTask(context, mVertexTask.get()));
+        ANGLE_TRY(checkTask(context, mPixelTask.get()));
+        ANGLE_TRY(checkTask(context, mGeometryTask.get()));
+
+        if (mVertexTask.get()->getResult() == angle::Result::Incomplete ||
+            mPixelTask.get()->getResult() == angle::Result::Incomplete ||
+            mGeometryTask.get()->getResult() == angle::Result::Incomplete)
+        {
+            return angle::Result::Incomplete;
+        }
+
+        ShaderExecutableD3D *defaultVertexExecutable = mVertexTask->getExecutable();
+        ShaderExecutableD3D *defaultPixelExecutable  = mPixelTask->getExecutable();
+        ShaderExecutableD3D *pointGS                 = mGeometryTask->getExecutable();
+
+        if (mUseGS && pointGS)
+        {
+            // Geometry shaders are currently only used internally, so there is no corresponding
+            // shader object at the interface level. For now the geometry shader debug info is
+            // prepended to the vertex shader.
+            mVertexShader->appendDebugInfo("// GEOMETRY SHADER BEGIN\n\n");
+            mVertexShader->appendDebugInfo(pointGS->getDebugInfo());
+            mVertexShader->appendDebugInfo("\nGEOMETRY SHADER END\n\n\n");
+        }
+
+        if (defaultVertexExecutable)
+        {
+            mVertexShader->appendDebugInfo(defaultVertexExecutable->getDebugInfo());
+        }
+
+        if (defaultPixelExecutable)
+        {
+            mFragmentShader->appendDebugInfo(defaultPixelExecutable->getDebugInfo());
+        }
+
+        bool isLinked = (defaultVertexExecutable && defaultPixelExecutable && (!mUseGS || pointGS));
+        if (!isLinked)
+        {
+            mInfoLog << "Failed to create D3D Shaders";
+        }
+        return isLinked ? angle::Result::Continue : angle::Result::Incomplete;
     }
 
-    return gl::NoError();
-}
+    bool isLinking() override
+    {
+        for (auto &event : mWaitEvents)
+        {
+            if (!event->isReady())
+            {
+                return true;
+            }
+        }
+        return false;
+    }
 
-gl::LinkResult ProgramD3D::compileProgramExecutables(const gl::Context *context,
-                                                     gl::InfoLog &infoLog)
+  private:
+    angle::Result checkTask(const gl::Context *context, ProgramD3D::GetExecutableTask *task)
+    {
+        if (!task->getInfoLog().empty())
+        {
+            mInfoLog << task->getInfoLog().str();
+        }
+
+        // Continue and Incomplete are not errors. For Stop, pass the error to the ContextD3D.
+        if (task->getResult() != angle::Result::Stop)
+        {
+            return angle::Result::Continue;
+        }
+
+        ContextD3D *contextD3D = GetImplAs<ContextD3D>(context);
+        task->popError(contextD3D);
+        return angle::Result::Stop;
+    }
+
+    gl::InfoLog &mInfoLog;
+    std::shared_ptr<WorkerThreadPool> mWorkerPool;
+    std::shared_ptr<ProgramD3D::GetVertexExecutableTask> mVertexTask;
+    std::shared_ptr<ProgramD3D::GetPixelExecutableTask> mPixelTask;
+    std::shared_ptr<ProgramD3D::GetGeometryExecutableTask> mGeometryTask;
+    std::array<std::shared_ptr<WaitableEvent>, 3> mWaitEvents;
+    bool mUseGS;
+    const ShaderD3D *mVertexShader;
+    const ShaderD3D *mFragmentShader;
+};
+
+std::unique_ptr<LinkEvent> ProgramD3D::compileProgramExecutables(const gl::Context *context,
+                                                                 gl::InfoLog &infoLog)
 {
     // Ensure the compiler is initialized to avoid race conditions.
-    ANGLE_TRY(mRenderer->ensureHLSLCompilerInitialized());
-
-    WorkerThreadPool *workerPool = mRenderer->getWorkerThreadPool();
-
-    GetVertexExecutableTask vertexTask(this, context);
-    GetPixelExecutableTask pixelTask(this);
-    GetGeometryExecutableTask geometryTask(this, context);
-
-    std::array<WaitableEvent, 3> waitEvents = {{workerPool->postWorkerTask(&vertexTask),
-                                                workerPool->postWorkerTask(&pixelTask),
-                                                workerPool->postWorkerTask(&geometryTask)}};
-
-    WaitableEvent::WaitMany(&waitEvents);
-
-    if (!vertexTask.getInfoLog().empty())
+    angle::Result result = mRenderer->ensureHLSLCompilerInitialized(GetImplAs<ContextD3D>(context));
+    if (result != angle::Result::Continue)
     {
-        infoLog << vertexTask.getInfoLog().str();
-    }
-    if (!pixelTask.getInfoLog().empty())
-    {
-        infoLog << pixelTask.getInfoLog().str();
-    }
-    if (!geometryTask.getInfoLog().empty())
-    {
-        infoLog << geometryTask.getInfoLog().str();
+        return std::make_unique<LinkEventDone>(result);
     }
 
-    ANGLE_TRY(vertexTask.getError());
-    ANGLE_TRY(pixelTask.getError());
-    ANGLE_TRY(geometryTask.getError());
+    auto vertexTask   = std::make_shared<GetVertexExecutableTask>(this);
+    auto pixelTask    = std::make_shared<GetPixelExecutableTask>(this);
+    auto geometryTask = std::make_shared<GetGeometryExecutableTask>(this, context->getState());
+    bool useGS        = usesGeometryShader(context->getState(), gl::PrimitiveMode::Points);
+    const ShaderD3D *vertexShaderD3D =
+        GetImplAs<ShaderD3D>(mState.getAttachedShader(gl::ShaderType::Vertex));
+    const ShaderD3D *fragmentShaderD3D =
+        GetImplAs<ShaderD3D>(mState.getAttachedShader(gl::ShaderType::Fragment));
 
-    ShaderExecutableD3D *defaultVertexExecutable = vertexTask.getResult();
-    ShaderExecutableD3D *defaultPixelExecutable  = pixelTask.getResult();
-    ShaderExecutableD3D *pointGS                 = geometryTask.getResult();
-
-    const ShaderD3D *vertexShaderD3D = GetImplAs<ShaderD3D>(mState.getAttachedVertexShader());
-
-    if (usesGeometryShader(GL_POINTS) && pointGS)
-    {
-        // Geometry shaders are currently only used internally, so there is no corresponding shader
-        // object at the interface level. For now the geometry shader debug info is prepended to
-        // the vertex shader.
-        vertexShaderD3D->appendDebugInfo("// GEOMETRY SHADER BEGIN\n\n");
-        vertexShaderD3D->appendDebugInfo(pointGS->getDebugInfo());
-        vertexShaderD3D->appendDebugInfo("\nGEOMETRY SHADER END\n\n\n");
-    }
-
-    if (defaultVertexExecutable)
-    {
-        vertexShaderD3D->appendDebugInfo(defaultVertexExecutable->getDebugInfo());
-    }
-
-    if (defaultPixelExecutable)
-    {
-        const ShaderD3D *fragmentShaderD3D =
-            GetImplAs<ShaderD3D>(mState.getAttachedFragmentShader());
-        fragmentShaderD3D->appendDebugInfo(defaultPixelExecutable->getDebugInfo());
-    }
-
-    return (defaultVertexExecutable && defaultPixelExecutable &&
-            (!usesGeometryShader(GL_POINTS) || pointGS));
+    return std::make_unique<GraphicsProgramLinkEvent>(infoLog, context->getWorkerThreadPool(),
+                                                      vertexTask, pixelTask, geometryTask, useGS,
+                                                      vertexShaderD3D, fragmentShaderD3D);
 }
 
-gl::LinkResult ProgramD3D::compileComputeExecutable(const gl::Context *context,
-                                                    gl::InfoLog &infoLog)
+angle::Result ProgramD3D::getComputeExecutableForImage2DBindLayout(
+    d3d::Context *context,
+    ShaderExecutableD3D **outExecutable,
+    gl::InfoLog *infoLog)
 {
-    // Ensure the compiler is initialized to avoid race conditions.
-    ANGLE_TRY(mRenderer->ensureHLSLCompilerInitialized());
+    if (mCachedComputeExecutableIndex.valid())
+    {
+        *outExecutable =
+            mComputeExecutables[mCachedComputeExecutableIndex.value()]->shaderExecutable();
+        return angle::Result::Continue;
+    }
 
-    std::string computeShader = mDynamicHLSL->generateComputeShaderLinkHLSL(context, mState);
+    std::string finalComputeHLSL = mDynamicHLSL->generateComputeShaderForImage2DBindSignature(
+        context, *this, mState, mImage2DUniforms, mComputeShaderImage2DBindLayoutCache);
 
+    // Generate new compute executable
     ShaderExecutableD3D *computeExecutable = nullptr;
-    ANGLE_TRY(mRenderer->compileToExecutable(infoLog, computeShader, gl::SHADER_COMPUTE,
-                                             std::vector<D3DVarying>(), false,
-                                             angle::CompilerWorkaroundsD3D(), &computeExecutable));
 
-    if (computeExecutable == nullptr)
+    gl::InfoLog tempInfoLog;
+    gl::InfoLog *currentInfoLog = infoLog ? infoLog : &tempInfoLog;
+
+    ANGLE_TRY(mRenderer->compileToExecutable(
+        context, *currentInfoLog, finalComputeHLSL, gl::ShaderType::Compute,
+        std::vector<D3DVarying>(), false, angle::CompilerWorkaroundsD3D(), &computeExecutable));
+
+    if (computeExecutable)
+    {
+        mComputeExecutables.push_back(std::unique_ptr<ComputeExecutable>(
+            new ComputeExecutable(mComputeShaderImage2DBindLayoutCache,
+                                  std::unique_ptr<ShaderExecutableD3D>(computeExecutable))));
+        mCachedComputeExecutableIndex = mComputeExecutables.size() - 1;
+    }
+    else if (!infoLog)
     {
         ERR() << "Error compiling dynamic compute executable:" << std::endl
-              << infoLog.str() << std::endl;
+              << tempInfoLog.str() << std::endl;
     }
-    else
-    {
-        const ShaderD3D *computeShaderD3D = GetImplAs<ShaderD3D>(mState.getAttachedComputeShader());
-        computeShaderD3D->appendDebugInfo(computeExecutable->getDebugInfo());
-        mComputeExecutable.reset(computeExecutable);
-    }
+    *outExecutable = computeExecutable;
 
-    return mComputeExecutable.get() != nullptr;
+    return angle::Result::Continue;
 }
 
-gl::LinkResult ProgramD3D::link(const gl::Context *context,
-                                const gl::ProgramLinkedResources &resources,
-                                gl::InfoLog &infoLog)
+angle::Result ProgramD3D::compileComputeExecutable(d3d::Context *context, gl::InfoLog &infoLog)
 {
-    const auto &data = context->getContextState();
+    // Ensure the compiler is initialized to avoid race conditions.
+    ANGLE_TRY(mRenderer->ensureHLSLCompilerInitialized(context));
+
+    updateCachedImage2DBindLayoutFromComputeShader();
+
+    ShaderExecutableD3D *computeExecutable = nullptr;
+    ANGLE_TRY(getComputeExecutableForImage2DBindLayout(context, &computeExecutable, &infoLog));
+
+    return computeExecutable ? angle::Result::Continue : angle::Result::Incomplete;
+}
+
+std::unique_ptr<LinkEvent> ProgramD3D::link(const gl::Context *context,
+                                            const gl::ProgramLinkedResources &resources,
+                                            gl::InfoLog &infoLog)
+{
+    const auto &data = context->getState();
 
     reset();
 
-    gl::Shader *computeShader = mState.getAttachedComputeShader();
+    gl::Shader *computeShader = mState.getAttachedShader(gl::ShaderType::Compute);
     if (computeShader)
     {
-        mSamplersCS.resize(data.getCaps().maxComputeTextureImageUnits);
+        mShaderSamplers[gl::ShaderType::Compute].resize(
+            data.getCaps().maxShaderTextureImageUnits[gl::ShaderType::Compute]);
         mImagesCS.resize(data.getCaps().maxImageUnits);
         mReadonlyImagesCS.resize(data.getCaps().maxImageUnits);
 
-        defineUniformsAndAssignRegisters(context);
+        mShaderUniformsDirty.set(gl::ShaderType::Compute);
 
-        gl::LinkResult result = compileComputeExecutable(context, infoLog);
-        if (result.isError())
+        linkResources(resources);
+
+        for (const sh::Uniform &uniform : computeShader->getUniforms())
         {
-            infoLog << result.getError().getMessage();
-            return result;
-        }
-        else if (!result.getResult())
-        {
-            infoLog << "Failed to create D3D compute shader.";
-            return result;
-        }
-    }
-    else
-    {
-        gl::Shader *vertexShader   = mState.getAttachedVertexShader();
-        gl::Shader *fragmentShader = mState.getAttachedFragmentShader();
-
-        const ShaderD3D *vertexShaderD3D   = GetImplAs<ShaderD3D>(vertexShader);
-        const ShaderD3D *fragmentShaderD3D = GetImplAs<ShaderD3D>(fragmentShader);
-
-        mSamplersVS.resize(data.getCaps().maxVertexTextureImageUnits);
-        mSamplersPS.resize(data.getCaps().maxTextureImageUnits);
-
-        vertexShaderD3D->generateWorkarounds(&mVertexWorkarounds);
-        fragmentShaderD3D->generateWorkarounds(&mPixelWorkarounds);
-
-        if (mRenderer->getNativeLimitations().noFrontFacingSupport)
-        {
-            if (fragmentShaderD3D->usesFrontFacing())
+            if (gl::IsImageType(uniform.type) && gl::IsImage2DType(uniform.type))
             {
-                infoLog << "The current renderer doesn't support gl_FrontFacing";
-                return false;
+                mImage2DUniforms.push_back(uniform);
             }
         }
 
-        ProgramD3DMetadata metadata(mRenderer, vertexShaderD3D, fragmentShaderD3D);
+        defineUniformsAndAssignRegisters();
+
+        angle::Result result = compileComputeExecutable(GetImplAs<ContextD3D>(context), infoLog);
+        if (result != angle::Result::Continue)
+        {
+            infoLog << "Failed to create D3D compute shader.";
+        }
+        return std::make_unique<LinkEventDone>(result);
+    }
+    else
+    {
+        gl::ShaderMap<const ShaderD3D *> shadersD3D = {};
+        for (gl::ShaderType shaderType : gl::kAllGraphicsShaderTypes)
+        {
+            if (mState.getAttachedShader(shaderType))
+            {
+                shadersD3D[shaderType] = GetImplAs<ShaderD3D>(mState.getAttachedShader(shaderType));
+
+                mShaderSamplers[shaderType].resize(
+                    data.getCaps().maxShaderTextureImageUnits[shaderType]);
+
+                shadersD3D[shaderType]->generateWorkarounds(&mShaderWorkarounds[shaderType]);
+
+                mShaderUniformsDirty.set(shaderType);
+            }
+        }
+
+        if (mRenderer->getNativeLimitations().noFrontFacingSupport)
+        {
+            if (shadersD3D[gl::ShaderType::Fragment]->usesFrontFacing())
+            {
+                infoLog << "The current renderer doesn't support gl_FrontFacing";
+                return std::make_unique<LinkEventDone>(angle::Result::Incomplete);
+            }
+        }
+
+        ProgramD3DMetadata metadata(mRenderer, shadersD3D);
         BuiltinVaryingsD3D builtins(metadata, resources.varyingPacking);
 
-        mDynamicHLSL->generateShaderLinkHLSL(context, mState, metadata, resources.varyingPacking,
-                                             builtins, &mPixelHLSL, &mVertexHLSL);
+        mDynamicHLSL->generateShaderLinkHLSL(context->getCaps(), mState, metadata,
+                                             resources.varyingPacking, builtins, &mShaderHLSL);
 
-        mUsesPointSize = vertexShaderD3D->usesPointSize();
+        mUsesPointSize = shadersD3D[gl::ShaderType::Vertex]->usesPointSize();
         mDynamicHLSL->getPixelShaderOutputKey(data, mState, metadata, &mPixelShaderKey);
         mUsesFragDepth            = metadata.usesFragDepth();
         mUsesViewID               = metadata.usesViewID();
         mHasANGLEMultiviewEnabled = metadata.hasANGLEMultiviewEnabled();
 
         // Cache if we use flat shading
-        mUsesFlatInterpolation =
-            (FindFlatInterpolationVarying(fragmentShader->getInputVaryings(context)) ||
-             FindFlatInterpolationVarying(vertexShader->getOutputVaryings(context)));
+        mUsesFlatInterpolation = FindFlatInterpolationVarying(mState.getAttachedShaders());
 
         if (mRenderer->getMajorShaderModel() >= 4)
         {
@@ -1753,34 +2054,61 @@ gl::LinkResult ProgramD3D::link(const gl::Context *context,
                 metadata.canSelectViewInVertexShader());
         }
 
-        initAttribLocationsToD3DSemantic(context);
+        initAttribLocationsToD3DSemantic();
 
-        defineUniformsAndAssignRegisters(context);
+        defineUniformsAndAssignRegisters();
 
-        gatherTransformFeedbackVaryings(resources.varyingPacking, builtins[gl::SHADER_VERTEX]);
+        gatherTransformFeedbackVaryings(resources.varyingPacking, builtins[gl::ShaderType::Vertex]);
 
-        gl::LinkResult result = compileProgramExecutables(context, infoLog);
-        if (result.isError())
-        {
-            infoLog << result.getError().getMessage();
-            return result;
-        }
-        else if (!result.getResult())
-        {
-            infoLog << "Failed to create D3D shaders.";
-            return result;
-        }
+        linkResources(resources);
+
+        return compileProgramExecutables(context, infoLog);
     }
-
-    linkResources(context, resources);
-
-    return true;
 }
 
 GLboolean ProgramD3D::validate(const gl::Caps & /*caps*/, gl::InfoLog * /*infoLog*/)
 {
     // TODO(jmadill): Do something useful here?
     return GL_TRUE;
+}
+
+void ProgramD3D::initializeShaderStorageBlocks()
+{
+    if (mState.getShaderStorageBlocks().empty())
+    {
+        return;
+    }
+
+    ASSERT(mD3DShaderStorageBlocks.empty());
+
+    // Assign registers and update sizes.
+    gl::ShaderMap<const ShaderD3D *> shadersD3D = {};
+    for (gl::ShaderType shaderType : gl::AllShaderTypes())
+    {
+        shadersD3D[shaderType] = SafeGetImplAs<ShaderD3D>(mState.getAttachedShader(shaderType));
+    }
+
+    for (const gl::InterfaceBlock &shaderStorageBlock : mState.getShaderStorageBlocks())
+    {
+        unsigned int shaderStorageBlockElement =
+            shaderStorageBlock.isArray ? shaderStorageBlock.arrayElement : 0;
+
+        D3DInterfaceBlock d3dShaderStorageBlock;
+
+        for (gl::ShaderType shaderType : gl::AllShaderTypes())
+        {
+            if (shaderStorageBlock.isActive(shaderType))
+            {
+                ASSERT(shadersD3D[shaderType]);
+                unsigned int baseRegister =
+                    shadersD3D[shaderType]->getShaderStorageBlockRegister(shaderStorageBlock.name);
+                d3dShaderStorageBlock.mShaderRegisterIndexes[shaderType] =
+                    baseRegister + shaderStorageBlockElement;
+            }
+        }
+
+        mD3DShaderStorageBlocks.push_back(d3dShaderStorageBlock);
+    }
 }
 
 void ProgramD3D::initializeUniformBlocks()
@@ -1793,78 +2121,63 @@ void ProgramD3D::initializeUniformBlocks()
     ASSERT(mD3DUniformBlocks.empty());
 
     // Assign registers and update sizes.
-    const ShaderD3D *vertexShaderD3D = SafeGetImplAs<ShaderD3D>(mState.getAttachedVertexShader());
-    const ShaderD3D *fragmentShaderD3D =
-        SafeGetImplAs<ShaderD3D>(mState.getAttachedFragmentShader());
-    const ShaderD3D *computeShaderD3D = SafeGetImplAs<ShaderD3D>(mState.getAttachedComputeShader());
+    gl::ShaderMap<const ShaderD3D *> shadersD3D = {};
+    for (gl::ShaderType shaderType : gl::AllShaderTypes())
+    {
+        shadersD3D[shaderType] = SafeGetImplAs<ShaderD3D>(mState.getAttachedShader(shaderType));
+    }
 
     for (const gl::InterfaceBlock &uniformBlock : mState.getUniformBlocks())
     {
         unsigned int uniformBlockElement = uniformBlock.isArray ? uniformBlock.arrayElement : 0;
 
-        D3DUniformBlock d3dUniformBlock;
+        D3DInterfaceBlock d3dUniformBlock;
 
-        if (uniformBlock.vertexStaticUse)
+        for (gl::ShaderType shaderType : gl::AllShaderTypes())
         {
-            ASSERT(vertexShaderD3D != nullptr);
-            unsigned int baseRegister = vertexShaderD3D->getUniformBlockRegister(uniformBlock.name);
-            d3dUniformBlock.vsRegisterIndex = baseRegister + uniformBlockElement;
-        }
-
-        if (uniformBlock.fragmentStaticUse)
-        {
-            ASSERT(fragmentShaderD3D != nullptr);
-            unsigned int baseRegister =
-                fragmentShaderD3D->getUniformBlockRegister(uniformBlock.name);
-            d3dUniformBlock.psRegisterIndex = baseRegister + uniformBlockElement;
-        }
-
-        if (uniformBlock.computeStaticUse)
-        {
-            ASSERT(computeShaderD3D != nullptr);
-            unsigned int baseRegister =
-                computeShaderD3D->getUniformBlockRegister(uniformBlock.name);
-            d3dUniformBlock.csRegisterIndex = baseRegister + uniformBlockElement;
+            if (uniformBlock.isActive(shaderType))
+            {
+                ASSERT(shadersD3D[shaderType]);
+                unsigned int baseRegister =
+                    shadersD3D[shaderType]->getUniformBlockRegister(uniformBlock.name);
+                d3dUniformBlock.mShaderRegisterIndexes[shaderType] =
+                    baseRegister + uniformBlockElement;
+            }
         }
 
         mD3DUniformBlocks.push_back(d3dUniformBlock);
     }
 }
 
-void ProgramD3D::initializeUniformStorage()
+void ProgramD3D::initializeUniformStorage(const gl::ShaderBitSet &availableShaderStages)
 {
     // Compute total default block size
-    unsigned int vertexRegisters   = 0;
-    unsigned int fragmentRegisters = 0;
-    unsigned int computeRegisters  = 0;
+    gl::ShaderMap<unsigned int> shaderRegisters = {};
     for (const D3DUniform *d3dUniform : mD3DUniforms)
     {
-        if (!d3dUniform->isSampler())
+        if (d3dUniform->isSampler())
         {
-            if (d3dUniform->isReferencedByVertexShader())
+            continue;
+        }
+
+        for (gl::ShaderType shaderType : availableShaderStages)
+        {
+            if (d3dUniform->isReferencedByShader(shaderType))
             {
-                vertexRegisters = std::max(vertexRegisters,
-                                           d3dUniform->vsRegisterIndex + d3dUniform->registerCount);
-            }
-            if (d3dUniform->isReferencedByFragmentShader())
-            {
-                fragmentRegisters = std::max(
-                    fragmentRegisters, d3dUniform->psRegisterIndex + d3dUniform->registerCount);
-            }
-            if (d3dUniform->isReferencedByComputeShader())
-            {
-                computeRegisters = std::max(
-                    computeRegisters, d3dUniform->csRegisterIndex + d3dUniform->registerCount);
+                shaderRegisters[shaderType] = std::max(
+                    shaderRegisters[shaderType],
+                    d3dUniform->mShaderRegisterIndexes[shaderType] + d3dUniform->registerCount);
             }
         }
     }
 
-    mVertexUniformStorage =
-        std::unique_ptr<UniformStorageD3D>(mRenderer->createUniformStorage(vertexRegisters * 16u));
-    mFragmentUniformStorage = std::unique_ptr<UniformStorageD3D>(
-        mRenderer->createUniformStorage(fragmentRegisters * 16u));
-    mComputeUniformStorage =
-        std::unique_ptr<UniformStorageD3D>(mRenderer->createUniformStorage(computeRegisters * 16u));
+    // We only reset uniform storages for the shader stages available in the program (attached
+    // shaders in ProgramD3D::link() and linkedShaderStages in ProgramD3D::load()).
+    for (gl::ShaderType shaderType : availableShaderStages)
+    {
+        mShaderUniformStorages[shaderType].reset(
+            mRenderer->createUniformStorage(shaderRegisters[shaderType] * 16u));
+    }
 
     // Iterate the uniforms again to assign data pointers to default block uniforms.
     for (D3DUniform *d3dUniform : mD3DUniforms)
@@ -1875,102 +2188,94 @@ void ProgramD3D::initializeUniformStorage()
             continue;
         }
 
-        if (d3dUniform->isReferencedByVertexShader())
+        for (gl::ShaderType shaderType : availableShaderStages)
         {
-            d3dUniform->vsData = mVertexUniformStorage->getDataPointer(d3dUniform->vsRegisterIndex,
-                                                                       d3dUniform->registerElement);
-        }
-
-        if (d3dUniform->isReferencedByFragmentShader())
-        {
-            d3dUniform->psData = mFragmentUniformStorage->getDataPointer(
-                d3dUniform->psRegisterIndex, d3dUniform->registerElement);
-        }
-
-        if (d3dUniform->isReferencedByComputeShader())
-        {
-            d3dUniform->csData = mComputeUniformStorage->getDataPointer(
-                d3dUniform->csRegisterIndex, d3dUniform->registerElement);
+            if (d3dUniform->isReferencedByShader(shaderType))
+            {
+                d3dUniform->mShaderData[shaderType] =
+                    mShaderUniformStorages[shaderType]->getDataPointer(
+                        d3dUniform->mShaderRegisterIndexes[shaderType],
+                        d3dUniform->registerElement);
+            }
         }
     }
 }
 
-void ProgramD3D::updateUniformBufferCache(const gl::Caps &caps,
-                                          unsigned int reservedVertex,
-                                          unsigned int reservedFragment)
+void ProgramD3D::updateUniformBufferCache(
+    const gl::Caps &caps,
+    const gl::ShaderMap<unsigned int> &reservedShaderRegisterIndexes)
 {
     if (mState.getUniformBlocks().empty())
     {
         return;
     }
 
-    mVertexUBOCache.clear();
-    mFragmentUBOCache.clear();
+    for (gl::ShaderType shaderType : gl::AllShaderTypes())
+    {
+        mShaderUBOCaches[shaderType].clear();
+    }
 
     for (unsigned int uniformBlockIndex = 0; uniformBlockIndex < mD3DUniformBlocks.size();
          uniformBlockIndex++)
     {
-        const D3DUniformBlock &uniformBlock = mD3DUniformBlocks[uniformBlockIndex];
-        GLuint blockBinding                 = mState.getUniformBlockBinding(uniformBlockIndex);
+        const D3DInterfaceBlock &uniformBlock = mD3DUniformBlocks[uniformBlockIndex];
+        GLuint blockBinding                   = mState.getUniformBlockBinding(uniformBlockIndex);
 
         // Unnecessary to apply an unreferenced standard or shared UBO
-        if (!uniformBlock.vertexStaticUse() && !uniformBlock.fragmentStaticUse())
+        for (gl::ShaderType shaderType : gl::AllShaderTypes())
         {
-            continue;
-        }
-
-        if (uniformBlock.vertexStaticUse())
-        {
-            unsigned int registerIndex = uniformBlock.vsRegisterIndex - reservedVertex;
-            ASSERT(registerIndex < caps.maxVertexUniformBlocks);
-
-            if (mVertexUBOCache.size() <= registerIndex)
+            if (!uniformBlock.activeInShader(shaderType))
             {
-                mVertexUBOCache.resize(registerIndex + 1, -1);
+                continue;
             }
 
-            ASSERT(mVertexUBOCache[registerIndex] == -1);
-            mVertexUBOCache[registerIndex] = blockBinding;
-        }
+            unsigned int registerIndex = uniformBlock.mShaderRegisterIndexes[shaderType] -
+                                         reservedShaderRegisterIndexes[shaderType];
+            ASSERT(registerIndex < caps.maxShaderUniformBlocks[shaderType]);
 
-        if (uniformBlock.fragmentStaticUse())
-        {
-            unsigned int registerIndex = uniformBlock.psRegisterIndex - reservedFragment;
-            ASSERT(registerIndex < caps.maxFragmentUniformBlocks);
-
-            if (mFragmentUBOCache.size() <= registerIndex)
+            std::vector<int> &shaderUBOcache = mShaderUBOCaches[shaderType];
+            if (shaderUBOcache.size() <= registerIndex)
             {
-                mFragmentUBOCache.resize(registerIndex + 1, -1);
+                shaderUBOcache.resize(registerIndex + 1, -1);
             }
 
-            ASSERT(mFragmentUBOCache[registerIndex] == -1);
-            mFragmentUBOCache[registerIndex] = blockBinding;
+            ASSERT(shaderUBOcache[registerIndex] == -1);
+            shaderUBOcache[registerIndex] = blockBinding;
         }
     }
 }
 
-const std::vector<GLint> &ProgramD3D::getVertexUniformBufferCache() const
+unsigned int ProgramD3D::getAtomicCounterBufferRegisterIndex(GLuint binding,
+                                                             gl::ShaderType shaderType) const
 {
-    return mVertexUBOCache;
+    if (shaderType != gl::ShaderType::Compute)
+    {
+        // Implement atomic counters for non-compute shaders
+        // http://anglebug.com/1729
+        UNIMPLEMENTED();
+    }
+    return mComputeAtomicCounterBufferRegisterIndices[binding];
 }
 
-const std::vector<GLint> &ProgramD3D::getFragmentUniformBufferCache() const
+unsigned int ProgramD3D::getShaderStorageBufferRegisterIndex(GLuint blockIndex,
+                                                             gl::ShaderType shaderType) const
 {
-    return mFragmentUBOCache;
+    return mD3DShaderStorageBlocks[blockIndex].mShaderRegisterIndexes[shaderType];
+}
+
+const std::vector<GLint> &ProgramD3D::getShaderUniformBufferCache(gl::ShaderType shaderType) const
+{
+    return mShaderUBOCaches[shaderType];
 }
 
 void ProgramD3D::dirtyAllUniforms()
 {
-    mVertexUniformsDirty   = true;
-    mFragmentUniformsDirty = true;
-    mComputeUniformsDirty  = true;
+    mShaderUniformsDirty = mState.getLinkedShaderStages();
 }
 
 void ProgramD3D::markUniformsClean()
 {
-    mVertexUniformsDirty   = false;
-    mFragmentUniformsDirty = false;
-    mComputeUniformsDirty  = false;
+    mShaderUniformsDirty.reset();
 }
 
 void ProgramD3D::setUniform1fv(GLint location, GLsizei count, const GLfloat *v)
@@ -1998,7 +2303,7 @@ void ProgramD3D::setUniformMatrix2fv(GLint location,
                                      GLboolean transpose,
                                      const GLfloat *value)
 {
-    setUniformMatrixfvInternal<2, 2>(location, count, transpose, value, GL_FLOAT_MAT2);
+    setUniformMatrixfvInternal<2, 2>(location, count, transpose, value);
 }
 
 void ProgramD3D::setUniformMatrix3fv(GLint location,
@@ -2006,7 +2311,7 @@ void ProgramD3D::setUniformMatrix3fv(GLint location,
                                      GLboolean transpose,
                                      const GLfloat *value)
 {
-    setUniformMatrixfvInternal<3, 3>(location, count, transpose, value, GL_FLOAT_MAT3);
+    setUniformMatrixfvInternal<3, 3>(location, count, transpose, value);
 }
 
 void ProgramD3D::setUniformMatrix4fv(GLint location,
@@ -2014,7 +2319,7 @@ void ProgramD3D::setUniformMatrix4fv(GLint location,
                                      GLboolean transpose,
                                      const GLfloat *value)
 {
-    setUniformMatrixfvInternal<4, 4>(location, count, transpose, value, GL_FLOAT_MAT4);
+    setUniformMatrixfvInternal<4, 4>(location, count, transpose, value);
 }
 
 void ProgramD3D::setUniformMatrix2x3fv(GLint location,
@@ -2022,7 +2327,7 @@ void ProgramD3D::setUniformMatrix2x3fv(GLint location,
                                        GLboolean transpose,
                                        const GLfloat *value)
 {
-    setUniformMatrixfvInternal<2, 3>(location, count, transpose, value, GL_FLOAT_MAT2x3);
+    setUniformMatrixfvInternal<2, 3>(location, count, transpose, value);
 }
 
 void ProgramD3D::setUniformMatrix3x2fv(GLint location,
@@ -2030,7 +2335,7 @@ void ProgramD3D::setUniformMatrix3x2fv(GLint location,
                                        GLboolean transpose,
                                        const GLfloat *value)
 {
-    setUniformMatrixfvInternal<3, 2>(location, count, transpose, value, GL_FLOAT_MAT3x2);
+    setUniformMatrixfvInternal<3, 2>(location, count, transpose, value);
 }
 
 void ProgramD3D::setUniformMatrix2x4fv(GLint location,
@@ -2038,7 +2343,7 @@ void ProgramD3D::setUniformMatrix2x4fv(GLint location,
                                        GLboolean transpose,
                                        const GLfloat *value)
 {
-    setUniformMatrixfvInternal<2, 4>(location, count, transpose, value, GL_FLOAT_MAT2x4);
+    setUniformMatrixfvInternal<2, 4>(location, count, transpose, value);
 }
 
 void ProgramD3D::setUniformMatrix4x2fv(GLint location,
@@ -2046,7 +2351,7 @@ void ProgramD3D::setUniformMatrix4x2fv(GLint location,
                                        GLboolean transpose,
                                        const GLfloat *value)
 {
-    setUniformMatrixfvInternal<4, 2>(location, count, transpose, value, GL_FLOAT_MAT4x2);
+    setUniformMatrixfvInternal<4, 2>(location, count, transpose, value);
 }
 
 void ProgramD3D::setUniformMatrix3x4fv(GLint location,
@@ -2054,7 +2359,7 @@ void ProgramD3D::setUniformMatrix3x4fv(GLint location,
                                        GLboolean transpose,
                                        const GLfloat *value)
 {
-    setUniformMatrixfvInternal<3, 4>(location, count, transpose, value, GL_FLOAT_MAT3x4);
+    setUniformMatrixfvInternal<3, 4>(location, count, transpose, value);
 }
 
 void ProgramD3D::setUniformMatrix4x3fv(GLint location,
@@ -2062,7 +2367,7 @@ void ProgramD3D::setUniformMatrix4x3fv(GLint location,
                                        GLboolean transpose,
                                        const GLfloat *value)
 {
-    setUniformMatrixfvInternal<4, 3>(location, count, transpose, value, GL_FLOAT_MAT4x3);
+    setUniformMatrixfvInternal<4, 3>(location, count, transpose, value);
 }
 
 void ProgramD3D::setUniform1iv(GLint location, GLsizei count, const GLint *v)
@@ -2105,43 +2410,25 @@ void ProgramD3D::setUniform4uiv(GLint location, GLsizei count, const GLuint *v)
     setUniformInternal(location, count, v, GL_UNSIGNED_INT_VEC4);
 }
 
-void ProgramD3D::setUniformBlockBinding(GLuint uniformBlockIndex, GLuint /*uniformBlockBinding*/)
-{
-    mRenderer->onDirtyUniformBlockBinding(uniformBlockIndex);
-}
-
-void ProgramD3D::defineUniformsAndAssignRegisters(const gl::Context *context)
+void ProgramD3D::defineUniformsAndAssignRegisters()
 {
     D3DUniformMap uniformMap;
-    gl::Shader *computeShader = mState.getAttachedComputeShader();
-    if (computeShader)
-    {
-        for (const sh::Uniform &computeUniform : computeShader->getUniforms(context))
-        {
-            if (computeUniform.staticUse)
-            {
-                defineUniformBase(computeShader, computeUniform, &uniformMap);
-            }
-        }
-    }
-    else
-    {
-        gl::Shader *vertexShader = mState.getAttachedVertexShader();
-        for (const sh::Uniform &vertexUniform : vertexShader->getUniforms(context))
-        {
-            if (vertexUniform.staticUse)
-            {
-                defineUniformBase(vertexShader, vertexUniform, &uniformMap);
-            }
-        }
 
-        gl::Shader *fragmentShader = mState.getAttachedFragmentShader();
-        for (const sh::Uniform &fragmentUniform : fragmentShader->getUniforms(context))
+    gl::ShaderBitSet attachedShaders;
+    for (gl::ShaderType shaderType : gl::AllShaderTypes())
+    {
+        gl::Shader *shader = mState.getAttachedShader(shaderType);
+        if (shader)
         {
-            if (fragmentUniform.staticUse)
+            for (const sh::Uniform &uniform : shader->getUniforms())
             {
-                defineUniformBase(fragmentShader, fragmentUniform, &uniformMap);
+                if (uniform.active)
+                {
+                    defineUniformBase(shader, uniform, &uniformMap);
+                }
             }
+
+            attachedShaders.set(shader->getType());
         }
     }
 
@@ -2167,41 +2454,67 @@ void ProgramD3D::defineUniformsAndAssignRegisters(const gl::Context *context)
     }
 
     assignAllSamplerRegisters();
+    assignAllAtomicCounterRegisters();
+    // Samplers and readonly images share shader input resource slot, adjust low value of
+    // readonly image range.
+    mUsedComputeReadonlyImageRange =
+        gl::RangeUI(mUsedShaderSamplerRanges[gl::ShaderType::Compute].high(),
+                    mUsedShaderSamplerRanges[gl::ShaderType::Compute].high());
+    // Atomic counter buffers and non-readonly images share input resource slots
+    mUsedComputeImageRange =
+        gl::RangeUI(mUsedComputeAtomicCounterRange.high(), mUsedComputeAtomicCounterRange.high());
     assignAllImageRegisters();
-    initializeUniformStorage();
+    initializeUniformStorage(attachedShaders);
 }
 
 void ProgramD3D::defineUniformBase(const gl::Shader *shader,
                                    const sh::Uniform &uniform,
                                    D3DUniformMap *uniformMap)
 {
+    sh::DummyBlockEncoder dummyEncoder;
+
     // Samplers get their registers assigned in assignAllSamplerRegisters, and images get their
     // registers assigned in assignAllImageRegisters.
     if (gl::IsSamplerType(uniform.type))
     {
-        defineUniform(shader->getType(), uniform, uniform.name, HLSLRegisterType::Texture, nullptr,
-                      uniformMap);
+        UniformEncodingVisitorD3D visitor(shader->getType(), HLSLRegisterType::Texture,
+                                          &dummyEncoder, uniformMap);
+        sh::TraverseShaderVariable(uniform, false, &visitor);
         return;
     }
-    else if (gl::IsImageType(uniform.type))
+
+    if (gl::IsImageType(uniform.type))
     {
         if (uniform.readonly)
         {
-            defineUniform(shader->getType(), uniform, uniform.name, HLSLRegisterType::Texture,
-                          nullptr, uniformMap);
+            UniformEncodingVisitorD3D visitor(shader->getType(), HLSLRegisterType::Texture,
+                                              &dummyEncoder, uniformMap);
+            sh::TraverseShaderVariable(uniform, false, &visitor);
         }
         else
         {
-            defineUniform(shader->getType(), uniform, uniform.name,
-                          HLSLRegisterType::UnorderedAccessView, nullptr, uniformMap);
+            UniformEncodingVisitorD3D visitor(shader->getType(),
+                                              HLSLRegisterType::UnorderedAccessView, &dummyEncoder,
+                                              uniformMap);
+            sh::TraverseShaderVariable(uniform, false, &visitor);
         }
         mImageBindingMap[uniform.name] = uniform.binding;
         return;
     }
-    else if (uniform.isBuiltIn())
+
+    if (uniform.isBuiltIn() && !uniform.isEmulatedBuiltIn())
     {
-        defineUniform(shader->getType(), uniform, uniform.name, HLSLRegisterType::None, nullptr,
-                      uniformMap);
+        UniformEncodingVisitorD3D visitor(shader->getType(), HLSLRegisterType::None, &dummyEncoder,
+                                          uniformMap);
+        sh::TraverseShaderVariable(uniform, false, &visitor);
+        return;
+    }
+    else if (gl::IsAtomicCounterType(uniform.type))
+    {
+        UniformEncodingVisitorD3D visitor(shader->getType(), HLSLRegisterType::UnorderedAccessView,
+                                          &dummyEncoder, uniformMap);
+        sh::TraverseShaderVariable(uniform, false, &visitor);
+        mAtomicBindingMap[uniform.name] = uniform.binding;
         return;
     }
 
@@ -2211,181 +2524,22 @@ void ProgramD3D::defineUniformBase(const gl::Shader *shader,
     sh::HLSLBlockEncoder encoder(sh::HLSLBlockEncoder::GetStrategyFor(outputType), true);
     encoder.skipRegisters(startRegister);
 
-    defineUniform(shader->getType(), uniform, uniform.name, HLSLRegisterType::None, &encoder,
-                  uniformMap);
+    UniformEncodingVisitorD3D visitor(shader->getType(), HLSLRegisterType::None, &encoder,
+                                      uniformMap);
+    sh::TraverseShaderVariable(uniform, false, &visitor);
 }
 
-D3DUniform *ProgramD3D::getD3DUniformByName(const std::string &name)
+bool ProgramD3D::hasNamedUniform(const std::string &name)
 {
     for (D3DUniform *d3dUniform : mD3DUniforms)
     {
         if (d3dUniform->name == name)
         {
-            return d3dUniform;
+            return true;
         }
     }
 
-    return nullptr;
-}
-
-void ProgramD3D::defineStructUniformFields(GLenum shaderType,
-                                           const std::vector<sh::ShaderVariable> &fields,
-                                           const std::string &namePrefix,
-                                           const HLSLRegisterType regType,
-                                           sh::HLSLBlockEncoder *encoder,
-                                           D3DUniformMap *uniformMap)
-{
-    if (encoder)
-        encoder->enterAggregateType();
-
-    for (size_t fieldIndex = 0; fieldIndex < fields.size(); fieldIndex++)
-    {
-        const sh::ShaderVariable &field  = fields[fieldIndex];
-        const std::string &fieldFullName = (namePrefix + "." + field.name);
-
-        // Samplers get their registers assigned in assignAllSamplerRegisters.
-        // Also they couldn't use the same encoder as the rest of the struct, since they are
-        // extracted out of the struct by the shader translator.
-        if (gl::IsSamplerType(field.type))
-        {
-            defineUniform(shaderType, field, fieldFullName, regType, nullptr, uniformMap);
-        }
-        else
-        {
-            defineUniform(shaderType, field, fieldFullName, regType, encoder, uniformMap);
-        }
-    }
-
-    if (encoder)
-        encoder->exitAggregateType();
-}
-
-void ProgramD3D::defineArrayOfStructsUniformFields(GLenum shaderType,
-                                                   const sh::ShaderVariable &uniform,
-                                                   unsigned int arrayNestingIndex,
-                                                   const std::string &prefix,
-                                                   const HLSLRegisterType regType,
-                                                   sh::HLSLBlockEncoder *encoder,
-                                                   D3DUniformMap *uniformMap)
-{
-    // Nested arrays are processed starting from outermost (arrayNestingIndex 0u) and ending at the
-    // innermost.
-    const unsigned int currentArraySize = uniform.getNestedArraySize(arrayNestingIndex);
-    for (unsigned int arrayElement = 0u; arrayElement < currentArraySize; ++arrayElement)
-    {
-        const std::string &elementString = prefix + ArrayString(arrayElement);
-        if (arrayNestingIndex + 1u < uniform.arraySizes.size())
-        {
-            defineArrayOfStructsUniformFields(shaderType, uniform, arrayNestingIndex + 1u,
-                                              elementString, regType, encoder, uniformMap);
-        }
-        else
-        {
-            defineStructUniformFields(shaderType, uniform.fields, elementString, regType, encoder,
-                                      uniformMap);
-        }
-    }
-}
-
-void ProgramD3D::defineArrayUniformElements(GLenum shaderType,
-                                            const sh::ShaderVariable &uniform,
-                                            const std::string &fullName,
-                                            const HLSLRegisterType regType,
-                                            sh::HLSLBlockEncoder *encoder,
-                                            D3DUniformMap *uniformMap)
-{
-    if (encoder)
-        encoder->enterAggregateType();
-
-    sh::ShaderVariable uniformElement = uniform;
-    uniformElement.arraySizes.pop_back();
-    for (unsigned int arrayIndex = 0u; arrayIndex < uniform.getOutermostArraySize(); ++arrayIndex)
-    {
-        std::string elementFullName = fullName + ArrayString(arrayIndex);
-        defineUniform(shaderType, uniformElement, elementFullName, regType, encoder, uniformMap);
-    }
-
-    if (encoder)
-        encoder->exitAggregateType();
-}
-
-void ProgramD3D::defineUniform(GLenum shaderType,
-                               const sh::ShaderVariable &uniform,
-                               const std::string &fullName,
-                               const HLSLRegisterType regType,
-                               sh::HLSLBlockEncoder *encoder,
-                               D3DUniformMap *uniformMap)
-{
-    if (uniform.isStruct())
-    {
-        if (uniform.isArray())
-        {
-            defineArrayOfStructsUniformFields(shaderType, uniform, 0u, fullName, regType, encoder,
-                                              uniformMap);
-        }
-        else
-        {
-            defineStructUniformFields(shaderType, uniform.fields, fullName, regType, encoder,
-                                      uniformMap);
-        }
-        return;
-    }
-    if (uniform.isArrayOfArrays())
-    {
-        defineArrayUniformElements(shaderType, uniform, fullName, regType, encoder, uniformMap);
-        return;
-    }
-
-    // Not a struct. Arrays are treated as aggregate types.
-    if (uniform.isArray() && encoder)
-    {
-        encoder->enterAggregateType();
-    }
-
-    // Advance the uniform offset, to track registers allocation for structs
-    sh::BlockMemberInfo blockInfo =
-        encoder ? encoder->encodeType(uniform.type, uniform.arraySizes, false)
-                : sh::BlockMemberInfo::getDefaultBlockInfo();
-
-    auto uniformMapEntry   = uniformMap->find(fullName);
-    D3DUniform *d3dUniform = nullptr;
-
-    if (uniformMapEntry != uniformMap->end())
-    {
-        d3dUniform = uniformMapEntry->second;
-    }
-    else
-    {
-        d3dUniform = new D3DUniform(uniform.type, regType, fullName, uniform.arraySizes, true);
-        (*uniformMap)[fullName] = d3dUniform;
-    }
-
-    if (encoder)
-    {
-        d3dUniform->registerElement =
-            static_cast<unsigned int>(sh::HLSLBlockEncoder::getBlockRegisterElement(blockInfo));
-        unsigned int reg =
-            static_cast<unsigned int>(sh::HLSLBlockEncoder::getBlockRegister(blockInfo));
-        if (shaderType == GL_FRAGMENT_SHADER)
-        {
-            d3dUniform->psRegisterIndex = reg;
-        }
-        else if (shaderType == GL_VERTEX_SHADER)
-        {
-            d3dUniform->vsRegisterIndex = reg;
-        }
-        else
-        {
-            ASSERT(shaderType == GL_COMPUTE_SHADER);
-            d3dUniform->csRegisterIndex = reg;
-        }
-
-        // Arrays are treated as aggregate types
-        if (uniform.isArray())
-        {
-            encoder->exitAggregateType();
-        }
-    }
+    return false;
 }
 
 // Assume count is already clamped.
@@ -2396,8 +2550,8 @@ void ProgramD3D::setUniformImpl(const gl::VariableLocation &locationInfo,
                                 uint8_t *targetData,
                                 GLenum uniformType)
 {
-    D3DUniform *targetUniform = mD3DUniforms[locationInfo.index];
-    const int components      = targetUniform->typeInfo.componentCount;
+    D3DUniform *targetUniform             = mD3DUniforms[locationInfo.index];
+    const int components                  = targetUniform->typeInfo.componentCount;
     const unsigned int arrayElementOffset = locationInfo.arrayIndex;
 
     if (targetUniform->typeInfo.type == uniformType)
@@ -2447,97 +2601,41 @@ void ProgramD3D::setUniformInternal(GLint location, GLsizei count, const T *v, G
         return;
     }
 
-    if (targetUniform->vsData)
+    for (gl::ShaderType shaderType : gl::AllShaderTypes())
     {
-        setUniformImpl(locationInfo, count, v, targetUniform->vsData, uniformType);
-        mVertexUniformsDirty = true;
-    }
-
-    if (targetUniform->psData)
-    {
-        setUniformImpl(locationInfo, count, v, targetUniform->psData, uniformType);
-        mFragmentUniformsDirty = true;
-    }
-
-    if (targetUniform->csData)
-    {
-        setUniformImpl(locationInfo, count, v, targetUniform->csData, uniformType);
-        mComputeUniformsDirty = true;
-    }
-}
-
-template <int cols, int rows>
-bool ProgramD3D::setUniformMatrixfvImpl(GLint location,
-                                        GLsizei countIn,
-                                        GLboolean transpose,
-                                        const GLfloat *value,
-                                        uint8_t *targetData,
-                                        GLenum targetUniformType)
-{
-    D3DUniform *targetUniform = getD3DUniformFromLocation(location);
-
-    unsigned int elementCount       = targetUniform->getArraySizeProduct();
-    unsigned int arrayElementOffset = mState.getUniformLocations()[location].arrayIndex;
-    unsigned int count =
-        std::min(elementCount - arrayElementOffset, static_cast<unsigned int>(countIn));
-
-    const unsigned int targetMatrixStride = (4 * rows);
-    GLfloat *target                       = reinterpret_cast<GLfloat *>(
-        targetData + arrayElementOffset * sizeof(GLfloat) * targetMatrixStride);
-
-    bool dirty = false;
-
-    for (unsigned int i = 0; i < count; i++)
-    {
-        // Internally store matrices as transposed versions to accomodate HLSL matrix indexing
-        if (transpose == GL_FALSE)
+        if (targetUniform->mShaderData[shaderType])
         {
-            dirty = TransposeExpandMatrix<GLfloat, cols, rows>(target, value) || dirty;
+            setUniformImpl(locationInfo, count, v, targetUniform->mShaderData[shaderType],
+                           uniformType);
+            mShaderUniformsDirty.set(shaderType);
         }
-        else
-        {
-            dirty = ExpandMatrix<GLfloat, cols, rows>(target, value) || dirty;
-        }
-        target += targetMatrixStride;
-        value += cols * rows;
     }
-
-    return dirty;
 }
 
 template <int cols, int rows>
 void ProgramD3D::setUniformMatrixfvInternal(GLint location,
                                             GLsizei countIn,
                                             GLboolean transpose,
-                                            const GLfloat *value,
-                                            GLenum targetUniformType)
+                                            const GLfloat *value)
 {
-    D3DUniform *targetUniform = getD3DUniformFromLocation(location);
+    D3DUniform *targetUniform                   = getD3DUniformFromLocation(location);
+    const gl::VariableLocation &uniformLocation = mState.getUniformLocations()[location];
+    unsigned int arrayElementOffset             = uniformLocation.arrayIndex;
+    unsigned int elementCount                   = targetUniform->getArraySizeProduct();
 
-    if (targetUniform->vsData)
-    {
-        if (setUniformMatrixfvImpl<cols, rows>(location, countIn, transpose, value,
-                                               targetUniform->vsData, targetUniformType))
-        {
-            mVertexUniformsDirty = true;
-        }
-    }
+    // Internally store matrices as transposed versions to accomodate HLSL matrix indexing
+    transpose = !transpose;
 
-    if (targetUniform->psData)
+    for (gl::ShaderType shaderType : gl::AllShaderTypes())
     {
-        if (setUniformMatrixfvImpl<cols, rows>(location, countIn, transpose, value,
-                                               targetUniform->psData, targetUniformType))
+        if (targetUniform->mShaderData[shaderType])
         {
-            mFragmentUniformsDirty = true;
-        }
-    }
-
-    if (targetUniform->csData)
-    {
-        if (setUniformMatrixfvImpl<cols, rows>(location, countIn, transpose, value,
-                                               targetUniform->csData, targetUniformType))
-        {
-            mComputeUniformsDirty = true;
+            if (SetFloatUniformMatrix<cols, rows>(arrayElementOffset, elementCount, countIn,
+                                                  transpose, value,
+                                                  targetUniform->mShaderData[shaderType]))
+            {
+                mShaderUniformsDirty.set(shaderType);
+            }
         }
     }
 }
@@ -2561,45 +2659,33 @@ void ProgramD3D::assignSamplerRegisters(size_t uniformIndex)
     // mD3DUniforms. However, the sampler register info is stored in the shader only for the
     // outermost array.
     std::vector<unsigned int> subscripts;
-    const std::string baseName  = gl::ParseResourceName(d3dUniform->name, &subscripts);
-    unsigned int registerOffset = mState.getUniforms()[uniformIndex].flattenedOffsetInParentArrays *
-                                  d3dUniform->getArraySizeProduct();
+    const std::string baseName = gl::ParseResourceName(d3dUniform->name, &subscripts);
+    unsigned int registerOffset =
+        mState.getUniforms()[uniformIndex].parentArrayIndex() * d3dUniform->getArraySizeProduct();
 
-    const gl::Shader *computeShader = mState.getAttachedComputeShader();
-    if (computeShader)
+    bool hasUniform = false;
+    for (gl::ShaderType shaderType : gl::AllShaderTypes())
     {
-        const ShaderD3D *computeShaderD3D = GetImplAs<ShaderD3D>(mState.getAttachedComputeShader());
-        ASSERT(computeShaderD3D->hasUniform(baseName));
-        d3dUniform->csRegisterIndex =
-            computeShaderD3D->getUniformRegister(baseName) + registerOffset;
-        ASSERT(d3dUniform->csRegisterIndex != GL_INVALID_INDEX);
-        AssignSamplers(d3dUniform->csRegisterIndex, d3dUniform->typeInfo,
-                       d3dUniform->getArraySizeProduct(), mSamplersCS, &mUsedComputeSamplerRange);
-    }
-    else
-    {
-        const ShaderD3D *vertexShaderD3D = GetImplAs<ShaderD3D>(mState.getAttachedVertexShader());
-        const ShaderD3D *fragmentShaderD3D =
-            GetImplAs<ShaderD3D>(mState.getAttachedFragmentShader());
-        ASSERT(vertexShaderD3D->hasUniform(baseName) || fragmentShaderD3D->hasUniform(baseName));
-        if (vertexShaderD3D->hasUniform(baseName))
+        if (!mState.getAttachedShader(shaderType))
         {
-            d3dUniform->vsRegisterIndex =
-                vertexShaderD3D->getUniformRegister(baseName) + registerOffset;
-            ASSERT(d3dUniform->vsRegisterIndex != GL_INVALID_INDEX);
-            AssignSamplers(d3dUniform->vsRegisterIndex, d3dUniform->typeInfo,
-                           d3dUniform->getArraySizeProduct(), mSamplersVS,
-                           &mUsedVertexSamplerRange);
+            continue;
         }
-        if (fragmentShaderD3D->hasUniform(baseName))
+
+        const ShaderD3D *shaderD3D = GetImplAs<ShaderD3D>(mState.getAttachedShader(shaderType));
+        if (shaderD3D->hasUniform(baseName))
         {
-            d3dUniform->psRegisterIndex =
-                fragmentShaderD3D->getUniformRegister(baseName) + registerOffset;
-            ASSERT(d3dUniform->psRegisterIndex != GL_INVALID_INDEX);
-            AssignSamplers(d3dUniform->psRegisterIndex, d3dUniform->typeInfo,
-                           d3dUniform->getArraySizeProduct(), mSamplersPS, &mUsedPixelSamplerRange);
+            d3dUniform->mShaderRegisterIndexes[shaderType] =
+                shaderD3D->getUniformRegister(baseName) + registerOffset;
+            ASSERT(d3dUniform->mShaderRegisterIndexes[shaderType] != GL_INVALID_VALUE);
+
+            AssignSamplers(d3dUniform->mShaderRegisterIndexes[shaderType], d3dUniform->typeInfo,
+                           d3dUniform->getArraySizeProduct(), mShaderSamplers[shaderType],
+                           &mUsedShaderSamplerRanges[shaderType]);
+            hasUniform = true;
         }
     }
+
+    ASSERT(hasUniform);
 }
 
 // static
@@ -2607,30 +2693,75 @@ void ProgramD3D::AssignSamplers(unsigned int startSamplerIndex,
                                 const gl::UniformTypeInfo &typeInfo,
                                 unsigned int samplerCount,
                                 std::vector<Sampler> &outSamplers,
-                                GLuint *outUsedRange)
+                                gl::RangeUI *outUsedRange)
 {
     unsigned int samplerIndex = startSamplerIndex;
+    unsigned int low          = outUsedRange->low();
+    unsigned int high         = outUsedRange->high();
 
     do
     {
         ASSERT(samplerIndex < outSamplers.size());
         Sampler *sampler            = &outSamplers[samplerIndex];
         sampler->active             = true;
-        sampler->textureType        = typeInfo.textureType;
+        sampler->textureType        = gl::FromGLenum<gl::TextureType>(typeInfo.textureType);
         sampler->logicalTextureUnit = 0;
-        *outUsedRange               = std::max(samplerIndex + 1, *outUsedRange);
+        low                         = std::min(samplerIndex, low);
+        high                        = std::max(samplerIndex + 1, high);
         samplerIndex++;
     } while (samplerIndex < startSamplerIndex + samplerCount);
+
+    ASSERT(low < high);
+    *outUsedRange = gl::RangeUI(low, high);
 }
 
 void ProgramD3D::assignAllImageRegisters()
 {
     for (size_t uniformIndex = 0; uniformIndex < mD3DUniforms.size(); ++uniformIndex)
     {
-        if (mD3DUniforms[uniformIndex]->isImage())
+        if (mD3DUniforms[uniformIndex]->isImage() && !mD3DUniforms[uniformIndex]->isImage2D())
         {
             assignImageRegisters(uniformIndex);
         }
+    }
+}
+
+void ProgramD3D::assignAllAtomicCounterRegisters()
+{
+    if (mAtomicBindingMap.empty())
+    {
+        return;
+    }
+    gl::ShaderType shaderType       = gl::ShaderType::Compute;
+    const gl::Shader *computeShader = mState.getAttachedShader(shaderType);
+    if (computeShader)
+    {
+        const ShaderD3D *computeShaderD3D = GetImplAs<ShaderD3D>(computeShader);
+        auto &registerIndices             = mComputeAtomicCounterBufferRegisterIndices;
+        unsigned int firstRegister        = GL_INVALID_VALUE;
+        unsigned int lastRegister         = 0;
+        for (auto &atomicBinding : mAtomicBindingMap)
+        {
+            ASSERT(computeShaderD3D->hasUniform(atomicBinding.first));
+            unsigned int currentRegister =
+                computeShaderD3D->getUniformRegister(atomicBinding.first);
+            ASSERT(currentRegister != GL_INVALID_INDEX);
+            const int kBinding = atomicBinding.second;
+
+            registerIndices[kBinding] = currentRegister;
+
+            firstRegister = std::min(firstRegister, currentRegister);
+            lastRegister  = std::max(lastRegister, currentRegister);
+        }
+        ASSERT(firstRegister != GL_INVALID_VALUE);
+        ASSERT(lastRegister != GL_INVALID_VALUE);
+        mUsedComputeAtomicCounterRange = gl::RangeUI(firstRegister, lastRegister + 1);
+    }
+    else
+    {
+        // Implement atomic counters for non-compute shaders
+        // http://anglebug.com/1729
+        UNIMPLEMENTED();
     }
 }
 
@@ -2642,30 +2773,32 @@ void ProgramD3D::assignImageRegisters(size_t uniformIndex)
     // mD3DUniforms. However, the image register info is stored in the shader only for the
     // outermost array.
     std::vector<unsigned int> subscripts;
-    const std::string baseName  = gl::ParseResourceName(d3dUniform->name, &subscripts);
-    unsigned int registerOffset = mState.getUniforms()[uniformIndex].flattenedOffsetInParentArrays *
-                                  d3dUniform->getArraySizeProduct();
+    const std::string baseName = gl::ParseResourceName(d3dUniform->name, &subscripts);
+    unsigned int registerOffset =
+        mState.getUniforms()[uniformIndex].parentArrayIndex() * d3dUniform->getArraySizeProduct();
 
-    const gl::Shader *computeShader = mState.getAttachedComputeShader();
+    const gl::Shader *computeShader = mState.getAttachedShader(gl::ShaderType::Compute);
     if (computeShader)
     {
-        const ShaderD3D *computeShaderD3D = GetImplAs<ShaderD3D>(mState.getAttachedComputeShader());
+        const ShaderD3D *computeShaderD3D =
+            GetImplAs<ShaderD3D>(mState.getAttachedShader(gl::ShaderType::Compute));
         ASSERT(computeShaderD3D->hasUniform(baseName));
-        d3dUniform->csRegisterIndex =
+        d3dUniform->mShaderRegisterIndexes[gl::ShaderType::Compute] =
             computeShaderD3D->getUniformRegister(baseName) + registerOffset;
-        ASSERT(d3dUniform->csRegisterIndex != GL_INVALID_INDEX);
+        ASSERT(d3dUniform->mShaderRegisterIndexes[gl::ShaderType::Compute] != GL_INVALID_INDEX);
         auto bindingIter = mImageBindingMap.find(baseName);
         ASSERT(bindingIter != mImageBindingMap.end());
         if (d3dUniform->regType == HLSLRegisterType::Texture)
         {
-            AssignImages(d3dUniform->csRegisterIndex, bindingIter->second,
-                         d3dUniform->getArraySizeProduct(), mReadonlyImagesCS,
+            AssignImages(d3dUniform->mShaderRegisterIndexes[gl::ShaderType::Compute],
+                         bindingIter->second, d3dUniform->getArraySizeProduct(), mReadonlyImagesCS,
                          &mUsedComputeReadonlyImageRange);
         }
         else if (d3dUniform->regType == HLSLRegisterType::UnorderedAccessView)
         {
-            AssignImages(d3dUniform->csRegisterIndex, bindingIter->second,
-                         d3dUniform->getArraySizeProduct(), mImagesCS, &mUsedComputeImageRange);
+            AssignImages(d3dUniform->mShaderRegisterIndexes[gl::ShaderType::Compute],
+                         bindingIter->second, d3dUniform->getArraySizeProduct(), mImagesCS,
+                         &mUsedComputeImageRange);
         }
         else
         {
@@ -2684,9 +2817,12 @@ void ProgramD3D::AssignImages(unsigned int startImageIndex,
                               int startLogicalImageUnit,
                               unsigned int imageCount,
                               std::vector<Image> &outImages,
-                              GLuint *outUsedRange)
+                              gl::RangeUI *outUsedRange)
 {
     unsigned int imageIndex = startImageIndex;
+    unsigned int low        = outUsedRange->low();
+    unsigned int high       = outUsedRange->high();
+
     // If declare without a binding qualifier, any uniform image variable (include all elements of
     // unbound image array) shoud be bound to unit zero.
     if (startLogicalImageUnit == -1)
@@ -2695,7 +2831,10 @@ void ProgramD3D::AssignImages(unsigned int startImageIndex,
         Image *image            = &outImages[imageIndex];
         image->active           = true;
         image->logicalImageUnit = 0;
-        *outUsedRange           = std::max(imageIndex + 1, *outUsedRange);
+        low                     = std::min(imageIndex, low);
+        high                    = std::max(imageIndex + 1, high);
+        ASSERT(low < high);
+        *outUsedRange = gl::RangeUI(low, high);
         return;
     }
 
@@ -2706,29 +2845,48 @@ void ProgramD3D::AssignImages(unsigned int startImageIndex,
         Image *image            = &outImages[imageIndex];
         image->active           = true;
         image->logicalImageUnit = logcalImageUnit;
-        *outUsedRange           = std::max(imageIndex + 1, *outUsedRange);
+        low                     = std::min(imageIndex, low);
+        high                    = std::max(imageIndex + 1, high);
         imageIndex++;
         logcalImageUnit++;
     } while (imageIndex < startImageIndex + imageCount);
+
+    ASSERT(low < high);
+    *outUsedRange = gl::RangeUI(low, high);
+}
+
+void ProgramD3D::assignImage2DRegisters(unsigned int startImageIndex,
+                                        int startLogicalImageUnit,
+                                        bool readonly)
+{
+    if (readonly)
+    {
+        AssignImages(startImageIndex, startLogicalImageUnit, 1, mReadonlyImagesCS,
+                     &mUsedComputeReadonlyImageRange);
+    }
+    else
+    {
+        AssignImages(startImageIndex, startLogicalImageUnit, 1, mImagesCS, &mUsedComputeImageRange);
+    }
 }
 
 void ProgramD3D::reset()
 {
     mVertexExecutables.clear();
     mPixelExecutables.clear();
+    mComputeExecutables.clear();
 
     for (auto &geometryExecutable : mGeometryExecutables)
     {
         geometryExecutable.reset(nullptr);
     }
 
-    mComputeExecutable.reset(nullptr);
+    for (gl::ShaderType shaderType : gl::AllShaderTypes())
+    {
+        mShaderHLSL[shaderType].clear();
+        mShaderWorkarounds[shaderType] = CompilerWorkaroundsD3D();
+    }
 
-    mVertexHLSL.clear();
-    mVertexWorkarounds = angle::CompilerWorkaroundsD3D();
-
-    mPixelHLSL.clear();
-    mPixelWorkarounds         = angle::CompilerWorkaroundsD3D();
     mUsesFragDepth            = false;
     mHasANGLEMultiviewEnabled = false;
     mUsesViewID               = false;
@@ -2738,23 +2896,23 @@ void ProgramD3D::reset()
 
     SafeDeleteContainer(mD3DUniforms);
     mD3DUniformBlocks.clear();
+    mD3DShaderStorageBlocks.clear();
+    mComputeAtomicCounterBufferRegisterIndices.fill({});
 
-    mVertexUniformStorage.reset(nullptr);
-    mFragmentUniformStorage.reset(nullptr);
-    mComputeUniformStorage.reset(nullptr);
+    for (gl::ShaderType shaderType : gl::AllShaderTypes())
+    {
+        mShaderUniformStorages[shaderType].reset();
+        mShaderSamplers[shaderType].clear();
+    }
 
-    mSamplersPS.clear();
-    mSamplersVS.clear();
-    mSamplersCS.clear();
     mImagesCS.clear();
     mReadonlyImagesCS.clear();
 
-    mUsedVertexSamplerRange        = 0;
-    mUsedPixelSamplerRange         = 0;
-    mUsedComputeSamplerRange       = 0;
+    mUsedShaderSamplerRanges.fill({0, 0});
+    mUsedComputeAtomicCounterRange = {0, 0};
     mDirtySamplerMapping           = true;
-    mUsedComputeImageRange         = 0;
-    mUsedComputeReadonlyImageRange = 0;
+    mUsedComputeImageRange         = {0, 0};
+    mUsedComputeReadonlyImageRange = {0, 0};
 
     mAttribLocationToD3DSemantic.fill(-1);
 
@@ -2762,7 +2920,7 @@ void ProgramD3D::reset()
 
     mGeometryShaderPreamble.clear();
 
-    dirtyAllUniforms();
+    markUniformsClean();
 
     mCachedPixelExecutableIndex.reset();
     mCachedVertexExecutableIndex.reset();
@@ -2778,14 +2936,14 @@ unsigned int ProgramD3D::issueSerial()
     return mCurrentSerial++;
 }
 
-void ProgramD3D::initAttribLocationsToD3DSemantic(const gl::Context *context)
+void ProgramD3D::initAttribLocationsToD3DSemantic()
 {
-    gl::Shader *vertexShader = mState.getAttachedVertexShader();
+    gl::Shader *vertexShader = mState.getAttachedShader(gl::ShaderType::Vertex);
     ASSERT(vertexShader != nullptr);
 
     // Init semantic index
     int semanticIndex = 0;
-    for (const sh::Attribute &attribute : vertexShader->getActiveAttributes(context))
+    for (const sh::Attribute &attribute : vertexShader->getActiveAttributes())
     {
         int regCount    = gl::VariableRegisterCount(attribute.type);
         GLuint location = mState.getAttributeLocation(attribute.name);
@@ -2818,11 +2976,11 @@ void ProgramD3D::updateCachedInputLayout(Serial associatedSerial, const gl::Stat
         {
             if (mCachedInputLayout.size() < static_cast<size_t>(d3dSemantic + 1))
             {
-                mCachedInputLayout.resize(d3dSemantic + 1, gl::VERTEX_FORMAT_INVALID);
+                mCachedInputLayout.resize(d3dSemantic + 1, angle::FormatID::NONE);
             }
             mCachedInputLayout[d3dSemantic] =
-                GetVertexFormatType(vertexAttributes[locationIndex],
-                                    state.getVertexAttribCurrentValue(locationIndex).Type);
+                GetVertexFormatID(vertexAttributes[locationIndex],
+                                  state.getVertexAttribCurrentValue(locationIndex).Type);
         }
     }
 
@@ -2847,7 +3005,11 @@ void ProgramD3D::updateCachedOutputLayout(const gl::Context *context,
         {
             auto binding = colorbuffer->getBinding() == GL_BACK ? GL_COLOR_ATTACHMENT0
                                                                 : colorbuffer->getBinding();
-            mPixelShaderOutputLayoutCache.push_back(binding);
+            size_t maxIndex = binding != GL_NONE ? GetMaxOutputIndex(mPixelShaderKey,
+                                                                     binding - GL_COLOR_ATTACHMENT0)
+                                                 : 0;
+            mPixelShaderOutputLayoutCache.insert(mPixelShaderOutputLayoutCache.end(), maxIndex + 1,
+                                                 binding);
         }
         else
         {
@@ -2856,6 +3018,25 @@ void ProgramD3D::updateCachedOutputLayout(const gl::Context *context,
     }
 
     updateCachedPixelExecutableIndex();
+}
+
+void ProgramD3D::updateCachedComputeImage2DBindLayout(const gl::Context *context)
+{
+    const auto &glState = context->getState();
+    for (auto &image2DBindLayout : mComputeShaderImage2DBindLayoutCache)
+    {
+        const gl::ImageUnit &imageUnit = glState.getImageUnit(image2DBindLayout.first);
+        if (imageUnit.texture.get())
+        {
+            image2DBindLayout.second = imageUnit.texture->getType();
+        }
+        else
+        {
+            image2DBindLayout.second = gl::TextureType::_2D;
+        }
+    }
+
+    updateCachedComputeExecutableIndex();
 }
 
 void ProgramD3D::gatherTransformFeedbackVaryings(const gl::VaryingPacking &varyingPacking,
@@ -2876,40 +3057,42 @@ void ProgramD3D::gatherTransformFeedbackVaryings(const gl::VaryingPacking &varyi
         {
             if (builtins.glPosition.enabled)
             {
-                mStreamOutVaryings.push_back(D3DVarying(builtins.glPosition.semantic,
-                                                        builtins.glPosition.index, 4, outputSlot));
+                mStreamOutVaryings.emplace_back(builtins.glPosition.semantic,
+                                                builtins.glPosition.index, 4, outputSlot);
             }
         }
         else if (tfVaryingName == "gl_FragCoord")
         {
             if (builtins.glFragCoord.enabled)
             {
-                mStreamOutVaryings.push_back(D3DVarying(builtins.glFragCoord.semantic,
-                                                        builtins.glFragCoord.index, 4, outputSlot));
+                mStreamOutVaryings.emplace_back(builtins.glFragCoord.semantic,
+                                                builtins.glFragCoord.index, 4, outputSlot);
             }
         }
         else if (tfVaryingName == "gl_PointSize")
         {
             if (builtins.glPointSize.enabled)
             {
-                mStreamOutVaryings.push_back(D3DVarying("PSIZE", 0, 1, outputSlot));
+                mStreamOutVaryings.emplace_back("PSIZE", 0, 1, outputSlot);
             }
         }
         else
         {
-            for (const auto &registerInfo : varyingPacking.getRegisterList())
+            const auto &registerInfos = varyingPacking.getRegisterList();
+            for (GLuint registerIndex = 0u; registerIndex < registerInfos.size(); ++registerIndex)
             {
-                const auto &varying   = *registerInfo.packedVarying->varying;
-                GLenum transposedType = gl::TransposeMatrixType(varying.type);
-                int componentCount    = gl::VariableColumnCount(transposedType);
+                const auto &registerInfo = registerInfos[registerIndex];
+                const auto &varying      = *registerInfo.packedVarying->varying;
+                GLenum transposedType    = gl::TransposeMatrixType(varying.type);
+                int componentCount       = gl::VariableColumnCount(transposedType);
                 ASSERT(!varying.isBuiltIn() && !varying.isStruct());
 
                 // There can be more than one register assigned to a particular varying, and each
                 // register needs its own stream out entry.
                 if (registerInfo.tfVaryingName() == tfVaryingName)
                 {
-                    mStreamOutVaryings.push_back(D3DVarying(
-                        varyingSemantic, registerInfo.semanticIndex, componentCount, outputSlot));
+                    mStreamOutVaryings.emplace_back(varyingSemantic, registerIndex, componentCount,
+                                                    outputSlot);
                 }
             }
         }
@@ -2939,21 +3122,27 @@ bool ProgramD3D::hasVertexExecutableForCachedInputLayout()
     return mCachedVertexExecutableIndex.valid();
 }
 
-bool ProgramD3D::hasGeometryExecutableForPrimitiveType(GLenum drawMode)
+bool ProgramD3D::hasGeometryExecutableForPrimitiveType(const gl::State &state,
+                                                       gl::PrimitiveMode drawMode)
 {
-    if (!usesGeometryShader(drawMode))
+    if (!usesGeometryShader(state, drawMode))
     {
         // No shader necessary mean we have the required (null) executable.
         return true;
     }
 
-    gl::PrimitiveType geometryShaderType = GetGeometryShaderTypeFromDrawMode(drawMode);
+    gl::PrimitiveMode geometryShaderType = GetGeometryShaderTypeFromDrawMode(drawMode);
     return mGeometryExecutables[geometryShaderType].get() != nullptr;
 }
 
 bool ProgramD3D::hasPixelExecutableForCachedOutputLayout()
 {
     return mCachedPixelExecutableIndex.valid();
+}
+
+bool ProgramD3D::hasComputeExecutableForCachedImage2DBindLayout()
+{
+    return mCachedComputeExecutableIndex.valid();
 }
 
 template <typename DestT>
@@ -2967,8 +3156,7 @@ void ProgramD3D::getUniformInternal(GLint location, DestT *dataOut) const
 
     if (gl::IsMatrixType(uniform.type))
     {
-        GetMatrixUniform(gl::VariableColumnCount(uniform.type), gl::VariableRowCount(uniform.type),
-                         dataOut, reinterpret_cast<const DestT *>(srcPointer));
+        GetMatrixUniform(uniform.type, dataOut, reinterpret_cast<const DestT *>(srcPointer), true);
     }
     else
     {
@@ -3017,24 +3205,31 @@ void ProgramD3D::updateCachedPixelExecutableIndex()
     }
 }
 
-void ProgramD3D::linkResources(const gl::Context *context,
-                               const gl::ProgramLinkedResources &resources)
+void ProgramD3D::updateCachedComputeExecutableIndex()
 {
-    UniformBlockInfo uniformBlockInfo;
-
-    if (mState.getAttachedVertexShader())
+    mCachedComputeExecutableIndex.reset();
+    for (size_t executableIndex = 0; executableIndex < mComputeExecutables.size();
+         executableIndex++)
     {
-        uniformBlockInfo.getShaderBlockInfo(context, mState.getAttachedVertexShader());
+        if (mComputeExecutables[executableIndex]->matchesSignature(
+                mComputeShaderImage2DBindLayoutCache))
+        {
+            mCachedComputeExecutableIndex = executableIndex;
+            break;
+        }
     }
+}
 
-    if (mState.getAttachedFragmentShader())
+void ProgramD3D::linkResources(const gl::ProgramLinkedResources &resources)
+{
+    InterfaceBlockInfo uniformBlockInfo;
+    for (gl::ShaderType shaderType : gl::AllShaderTypes())
     {
-        uniformBlockInfo.getShaderBlockInfo(context, mState.getAttachedFragmentShader());
-    }
-
-    if (mState.getAttachedComputeShader())
-    {
-        uniformBlockInfo.getShaderBlockInfo(context, mState.getAttachedComputeShader());
+        gl::Shader *shader = mState.getAttachedShader(shaderType);
+        if (shader)
+        {
+            uniformBlockInfo.getShaderBlockInfo(shader->getUniformBlocks());
+        }
     }
 
     // Gather interface block info.
@@ -3052,21 +3247,55 @@ void ProgramD3D::linkResources(const gl::Context *context,
     resources.uniformBlockLinker.linkBlocks(getUniformBlockSize, getUniformBlockMemberInfo);
     initializeUniformBlocks();
 
-    // TODO(jiajia.qin@intel.com): Determine correct shader storage block info.
-    auto getShaderStorageBlockSize = [](const std::string &name, const std::string &mappedName,
-                                        size_t *sizeOut) {
-        *sizeOut = 0;
-        return true;
+    InterfaceBlockInfo shaderStorageBlockInfo;
+    for (gl::ShaderType shaderType : gl::AllShaderTypes())
+    {
+        gl::Shader *shader = mState.getAttachedShader(shaderType);
+        if (shader)
+        {
+            shaderStorageBlockInfo.getShaderBlockInfo(shader->getShaderStorageBlocks());
+        }
+    }
+    auto getShaderStorageBlockSize = [&shaderStorageBlockInfo](const std::string &name,
+                                                               const std::string &mappedName,
+                                                               size_t *sizeOut) {
+        return shaderStorageBlockInfo.getBlockSize(name, mappedName, sizeOut);
     };
 
-    auto getShaderStorageBlockMemberInfo =
-        [](const std::string &name, const std::string &mappedName, sh::BlockMemberInfo *infoOut) {
-            *infoOut = sh::BlockMemberInfo::getDefaultBlockInfo();
-            return true;
-        };
+    auto getShaderStorageBlockMemberInfo = [&shaderStorageBlockInfo](const std::string &name,
+                                                                     const std::string &mappedName,
+                                                                     sh::BlockMemberInfo *infoOut) {
+        return shaderStorageBlockInfo.getBlockMemberInfo(name, mappedName, infoOut);
+    };
 
     resources.shaderStorageBlockLinker.linkBlocks(getShaderStorageBlockSize,
                                                   getShaderStorageBlockMemberInfo);
+    initializeShaderStorageBlocks();
+
+    std::map<int, unsigned int> sizeMap;
+    getAtomicCounterBufferSizeMap(sizeMap);
+    resources.atomicCounterBufferLinker.link(sizeMap);
+}
+
+void ProgramD3D::getAtomicCounterBufferSizeMap(std::map<int, unsigned int> &sizeMapOut) const
+{
+    for (unsigned int index : mState.getAtomicCounterUniformRange())
+    {
+        const gl::LinkedUniform &glUniform = mState.getUniforms()[index];
+
+        auto &bufferDataSize = sizeMapOut[glUniform.binding];
+
+        // Calculate the size of the buffer by finding the end of the last uniform with the same
+        // binding. The end of the uniform is calculated by finding the initial offset of the
+        // uniform and adding size of the uniform. For arrays, the size is the number of elements
+        // times the element size (should always by 4 for atomic_units).
+        unsigned dataOffset =
+            glUniform.offset + (glUniform.getBasicTypeElementCount() * glUniform.getElementSize());
+        if (dataOffset > bufferDataSize)
+        {
+            bufferDataSize = dataOffset;
+        }
+    }
 }
 
 }  // namespace rx

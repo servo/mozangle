@@ -12,29 +12,27 @@ DEFINES['ANGLE_GENERATE_SHADER_DEBUG_INFO'] = True
 #DEFINES['CHROMIUM_BUILD'] = True
 #DEFINES['COMPONENT_BUILD'] = True
 DEFINES['DYNAMIC_ANNOTATIONS_ENABLED'] = '1'
-DEFINES['EGL_EGLEXT_PROTOTYPES'] = True
-#DEFINES['FIELDTRIAL_TESTING_ENABLED'] = True
 #DEFINES['FULL_SAFE_BROWSING'] = True
-DEFINES['GL_GLEXT_PROTOTYPES'] = True
 DEFINES['LIBANGLE_IMPLEMENTATION'] = True
 DEFINES['NOMINMAX'] = True
 #DEFINES['NO_TCMALLOC'] = True
-DEFINES['NTDDI_VERSION'] = '0x0A000000'
-#DEFINES['PSAPI_VERSION'] = '1'
+DEFINES['NTDDI_VERSION'] = '0x0A000003'
+#DEFINES['PSAPI_VERSION'] = '2'
 #DEFINES['SAFE_BROWSING_CSD'] = True
 #DEFINES['SAFE_BROWSING_DB_LOCAL'] = True
 DEFINES['UNICODE'] = True
 #DEFINES['USE_AURA'] = '1'
-#DEFINES['V8_DEPRECATION_WARNINGS'] = True
 #DEFINES['WIN32'] = True
 #DEFINES['WIN32_LEAN_AND_MEAN'] = True
-#DEFINES['WINVER'] = '0x0A00'
+#DEFINES['WINAPI_FAMILY'] = 'WINAPI_FAMILY_DESKTOP_APP'
+DEFINES['WINVER'] = '0x0A00'
 #DEFINES['WTF_USE_DYNAMIC_ANNOTATIONS'] = '1'
 DEFINES['_ATL_NO_OPENGL'] = True
 DEFINES['_CRT_RAND_S'] = True
 DEFINES['_CRT_SECURE_NO_DEPRECATE'] = True
 #DEFINES['_DEBUG'] = True
 DEFINES['_HAS_EXCEPTIONS'] = '0'
+#DEFINES['_HAS_ITERATOR_DEBUGGING'] = '0'
 DEFINES['_SCL_SECURE_NO_DEPRECATE'] = True
 DEFINES['_SECURE_ATL'] = True
 DEFINES['_UNICODE'] = True
@@ -42,17 +40,14 @@ DEFINES['_UNICODE'] = True
 #DEFINES['_WIN32_WINNT'] = '0x0A00'
 #DEFINES['_WINDOWS'] = True
 #DEFINES['__STD_C'] = True
-#DEFINES['constexpr14'] = 'constexpr'
 
 LOCAL_INCLUDES += [
-    '../../checkout/',
     '../../checkout/include/',
-    '../../checkout/out/gen/',
     '../../checkout/out/gen/angle/',
     '../../checkout/src/',
     '../../checkout/src/common/third_party/base/',
 ]
-#
+
 #CXXFLAGS += [
 #    '/bigobj',
 #    '/d2FastFail',
@@ -74,13 +69,21 @@ LOCAL_INCLUDES += [
 #    '/wd4117',
 #    '/wd4121',
 #    '/wd4127',
+#    '/wd4200',
+#    '/wd4201',
+#    '/wd4204',
+#    '/wd4221',
 #    '/wd4244',
+#    '/wd4245',
 #    '/wd4251',
+#    '/wd4267',
 #    '/wd4275',
+#    '/wd4305',
 #    '/wd4312',
 #    '/wd4324',
 #    '/wd4351',
 #    '/wd4355',
+#    '/wd4389',
 #    '/wd4456',
 #    '/wd4457',
 #    '/wd4458',
@@ -94,7 +97,12 @@ LOCAL_INCLUDES += [
 #    '/wd4589',
 #    '/wd4610',
 #    '/wd4611',
+#    '/wd4661',
+#    '/wd4701',
 #    '/wd4702',
+#    '/wd4703',
+#    '/wd4706',
+#    '/wd4715',
 #    '/wd4838',
 #    '/wd4995',
 #    '/wd4996',
@@ -112,15 +120,17 @@ SOURCES += [
     '../../checkout/src/common/event_tracer.cpp',
     '../../checkout/src/libANGLE/angletypes.cpp',
     '../../checkout/src/libANGLE/AttributeMap.cpp',
+    '../../checkout/src/libANGLE/BlobCache.cpp',
     '../../checkout/src/libANGLE/Buffer.cpp',
     '../../checkout/src/libANGLE/Caps.cpp',
     '../../checkout/src/libANGLE/Compiler.cpp',
     '../../checkout/src/libANGLE/Config.cpp',
     '../../checkout/src/libANGLE/Context.cpp',
-    '../../checkout/src/libANGLE/ContextState.cpp',
+    '../../checkout/src/libANGLE/Context_gles_1_0.cpp',
     '../../checkout/src/libANGLE/Debug.cpp',
     '../../checkout/src/libANGLE/Device.cpp',
     '../../checkout/src/libANGLE/Display.cpp',
+    '../../checkout/src/libANGLE/EGLSync.cpp',
     '../../checkout/src/libANGLE/Error.cpp',
     '../../checkout/src/libANGLE/es3_copy_conversion_table_autogen.cpp',
     '../../checkout/src/libANGLE/Fence.cpp',
@@ -128,6 +138,8 @@ SOURCES += [
     '../../checkout/src/libANGLE/formatutils.cpp',
     '../../checkout/src/libANGLE/Framebuffer.cpp',
     '../../checkout/src/libANGLE/FramebufferAttachment.cpp',
+    '../../checkout/src/libANGLE/GLES1Renderer.cpp',
+    '../../checkout/src/libANGLE/GLES1State.cpp',
     '../../checkout/src/libANGLE/HandleAllocator.cpp',
     '../../checkout/src/libANGLE/HandleRangeAllocator.cpp',
     '../../checkout/src/libANGLE/Image.cpp',
@@ -135,8 +147,7 @@ SOURCES += [
     '../../checkout/src/libANGLE/IndexRangeCache.cpp',
     '../../checkout/src/libANGLE/LoggingAnnotator.cpp',
     '../../checkout/src/libANGLE/MemoryProgramCache.cpp',
-    '../../checkout/src/libANGLE/PackedGLEnums_autogen.cpp',
-    '../../checkout/src/libANGLE/params.cpp',
+    '../../checkout/src/libANGLE/Observer.cpp',
     '../../checkout/src/libANGLE/Path.cpp',
     '../../checkout/src/libANGLE/Platform.cpp',
     '../../checkout/src/libANGLE/Program.cpp',
@@ -153,6 +164,7 @@ SOURCES += [
     '../../checkout/src/libANGLE/renderer/d3d/d3d11/Buffer11.cpp',
     '../../checkout/src/libANGLE/renderer/d3d/d3d11/Clear11.cpp',
     '../../checkout/src/libANGLE/renderer/d3d/d3d11/Context11.cpp',
+    '../../checkout/src/libANGLE/renderer/d3d/d3d11/converged/CompositorNativeWindow11.cpp',
     '../../checkout/src/libANGLE/renderer/d3d/d3d11/DebugAnnotator11.cpp',
     '../../checkout/src/libANGLE/renderer/d3d/d3d11/dxgi_format_map_autogen.cpp',
     '../../checkout/src/libANGLE/renderer/d3d/d3d11/dxgi_support_table.cpp',
@@ -163,6 +175,7 @@ SOURCES += [
     '../../checkout/src/libANGLE/renderer/d3d/d3d11/IndexBuffer11.cpp',
     '../../checkout/src/libANGLE/renderer/d3d/d3d11/InputLayoutCache.cpp',
     '../../checkout/src/libANGLE/renderer/d3d/d3d11/PixelTransfer11.cpp',
+    '../../checkout/src/libANGLE/renderer/d3d/d3d11/Program11.cpp',
     '../../checkout/src/libANGLE/renderer/d3d/d3d11/ProgramPipeline11.cpp',
     '../../checkout/src/libANGLE/renderer/d3d/d3d11/Query11.cpp',
     '../../checkout/src/libANGLE/renderer/d3d/d3d11/Renderer11.cpp',
@@ -205,6 +218,7 @@ SOURCES += [
     '../../checkout/src/libANGLE/renderer/d3d/DeviceD3D.cpp',
     '../../checkout/src/libANGLE/renderer/d3d/DisplayD3D.cpp',
     '../../checkout/src/libANGLE/renderer/d3d/DynamicHLSL.cpp',
+    '../../checkout/src/libANGLE/renderer/d3d/DynamicImage2DHLSL.cpp',
     '../../checkout/src/libANGLE/renderer/d3d/EGLImageD3D.cpp',
     '../../checkout/src/libANGLE/renderer/d3d/FramebufferD3D.cpp',
     '../../checkout/src/libANGLE/renderer/d3d/HLSLCompiler.cpp',
@@ -228,13 +242,13 @@ SOURCES += [
     '../../checkout/src/libANGLE/renderer/driver_utils.cpp',
     '../../checkout/src/libANGLE/renderer/Format_table_autogen.cpp',
     '../../checkout/src/libANGLE/renderer/load_functions_table_autogen.cpp',
+    '../../checkout/src/libANGLE/renderer/QueryImpl.cpp',
     '../../checkout/src/libANGLE/renderer/renderer_utils.cpp',
     '../../checkout/src/libANGLE/renderer/SurfaceImpl.cpp',
     '../../checkout/src/libANGLE/renderer/TextureImpl.cpp',
     '../../checkout/src/libANGLE/ResourceManager.cpp',
     '../../checkout/src/libANGLE/Sampler.cpp',
     '../../checkout/src/libANGLE/Shader.cpp',
-    '../../checkout/src/libANGLE/signal_utils.cpp',
     '../../checkout/src/libANGLE/State.cpp',
     '../../checkout/src/libANGLE/Stream.cpp',
     '../../checkout/src/libANGLE/Surface.cpp',
@@ -274,9 +288,10 @@ OS_LIBS += [
     'dxguid',
     'setupapi',
 ]
-#
+
 #LDFLAGS += [
 #    '/DEBUG',
+#    '/pdbaltpath:%_PDB%',
 #    '/WX',
 #]
 

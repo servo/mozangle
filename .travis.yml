@@ -1,19 +1,13 @@
 language: rust
 rust: nightly
+dist: xenial
 
 os:
   - linux
   - osx
 
-addons:
-  apt:
-    sources:
-      - ubuntu-toolchain-r-test
-    packages:
-      - g++-4.8
-
 before_install:
-  - if [ "$TRAVIS_OS_NAME" = "linux" ]; then export CXX=g++-4.8; fi
+  - if [ "$TRAVIS_OS_NAME" = "linux" ]; then export CXX=clang++; fi
 
 script:
   - cargo test --verbose

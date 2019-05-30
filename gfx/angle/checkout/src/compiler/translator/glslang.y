@@ -123,41 +123,41 @@ extern void yyerror(YYLTYPE* yylloc, TParseContext* context, void *scanner, cons
       }                                                      \
   } while (0)
 
-#define VERTEX_ONLY(S, L) {  \
+#define VERTEX_ONLY(S, L) do {  \
     if (context->getShaderType() != GL_VERTEX_SHADER) {  \
         context->error(L, " supported in vertex shaders only", S);  \
     }  \
-}
+} while (0)
 
-#define COMPUTE_ONLY(S, L) {  \
+#define COMPUTE_ONLY(S, L) do {  \
     if (context->getShaderType() != GL_COMPUTE_SHADER) {  \
         context->error(L, " supported in compute shaders only", S);  \
     }  \
-}
+} while (0)
 
 #define ES2_ONLY(S, L) {  \
-    if (context->getShaderVersion() != 100) {  \
+    if (context->getShaderVersion() != 100) do {  \
         context->error(L, " supported in GLSL ES 1.00 only", S);  \
     }  \
-}
+} while (0)
 
-#define ES3_OR_NEWER(TOKEN, LINE, REASON) {  \
+#define ES3_OR_NEWER(TOKEN, LINE, REASON) do {  \
     if (context->getShaderVersion() < 300) {  \
         context->error(LINE, REASON " supported in GLSL ES 3.00 and above only", TOKEN);  \
     }  \
-}
+} while (0)
 
-#define ES3_OR_NEWER_OR_MULTIVIEW(TOKEN, LINE, REASON) {  \
+#define ES3_OR_NEWER_OR_MULTIVIEW(TOKEN, LINE, REASON) do {  \
     if (context->getShaderVersion() < 300 && !context->isExtensionEnabled(TExtension::OVR_multiview)) {  \
         context->error(LINE, REASON " supported in GLSL ES 3.00 and above only", TOKEN);  \
     }  \
-}
+} while (0)
 
-#define ES3_1_ONLY(TOKEN, LINE, REASON) {  \
+#define ES3_1_ONLY(TOKEN, LINE, REASON) do {  \
     if (context->getShaderVersion() != 310) {  \
         context->error(LINE, REASON " supported in GLSL ES 3.10 only", TOKEN);  \
     }  \
-}
+} while (0)
 %}
 
 %token <lex> INVARIANT HIGH_PRECISION MEDIUM_PRECISION LOW_PRECISION PRECISION
@@ -173,6 +173,7 @@ extern void yyerror(YYLTYPE* yylloc, TParseContext* context, void *scanner, cons
 %token <lex> ISAMPLER2D ISAMPLER3D ISAMPLERCUBE ISAMPLER2DARRAY
 %token <lex> USAMPLER2D USAMPLER3D USAMPLERCUBE USAMPLER2DARRAY
 %token <lex> SAMPLER2DMS ISAMPLER2DMS USAMPLER2DMS
+%token <lex> SAMPLER2DMSARRAY ISAMPLER2DMSARRAY USAMPLER2DMSARRAY
 %token <lex> SAMPLER3D SAMPLER3DRECT SAMPLER2DSHADOW SAMPLERCUBESHADOW SAMPLER2DARRAYSHADOW
 %token <lex> SAMPLEREXTERNAL2DY2YEXT
 %token <lex> IMAGE2D IIMAGE2D UIMAGE2D IMAGE3D IIMAGE3D UIMAGE3D IMAGE2DARRAY IIMAGE2DARRAY UIMAGE2DARRAY
@@ -607,7 +608,7 @@ declaration
     }
     | type_qualifier enter_struct struct_declaration_list RIGHT_BRACE SEMICOLON {
         ES3_OR_NEWER(ImmutableString($2.string), @1, "interface blocks");
-        $$ = context->addInterfaceBlock(*$1, @2, ImmutableString($2.string), $3, ImmutableString(""), @$, NULL, @$);
+        $$ = context->addInterfaceBlock(*$1, @2, ImmutableString($2.string), $3, kEmptyImmutableString, @$, NULL, @$);
     }
     | type_qualifier enter_struct struct_declaration_list RIGHT_BRACE IDENTIFIER SEMICOLON {
         ES3_OR_NEWER(ImmutableString($2.string), @1, "interface blocks");
@@ -650,7 +651,7 @@ function_header_with_parameters
         $$ = $1;
         if ($2.type->getBasicType() != EbtVoid)
         {
-            $1->addParameter($2.turnToConst());
+            $1->addParameter($2.createVariable(&context->symbolTable));
         }
     }
     | function_header_with_parameters COMMA parameter_declaration {
@@ -664,7 +665,7 @@ function_header_with_parameters
         }
         else
         {
-            $1->addParameter($3.turnToConst());
+            $1->addParameter($3.createVariable(&context->symbolTable));
         }
     }
     ;
@@ -740,7 +741,7 @@ init_declarator_list
 single_declaration
     : fully_specified_type {
         $$.type = $1;
-        $$.intermDeclaration = context->parseSingleDeclaration($$.type, @1, ImmutableString(""));
+        $$.intermDeclaration = context->parseSingleDeclaration($$.type, @1, kEmptyImmutableString);
     }
     | fully_specified_type identifier {
         $$.type = $1;
@@ -1084,6 +1085,9 @@ type_specifier_nonarray
     | SAMPLER2DMS {
         $$.initialize(EbtSampler2DMS, @1);
     }
+    | SAMPLER2DMSARRAY {
+        $$.initialize(EbtSampler2DMSArray, @1);
+    }
     | ISAMPLER2D {
         $$.initialize(EbtISampler2D, @1);
     }
@@ -1099,6 +1103,9 @@ type_specifier_nonarray
     | ISAMPLER2DMS {
         $$.initialize(EbtISampler2DMS, @1);
     }
+    | ISAMPLER2DMSARRAY {
+        $$.initialize(EbtISampler2DMSArray, @1);
+    }
     | USAMPLER2D {
         $$.initialize(EbtUSampler2D, @1);
     }
@@ -1113,6 +1120,9 @@ type_specifier_nonarray
     }
     | USAMPLER2DMS {
         $$.initialize(EbtUSampler2DMS, @1);
+    }
+    | USAMPLER2DMSARRAY {
+        $$.initialize(EbtUSampler2DMSArray, @1);
     }
     | SAMPLER2DSHADOW {
         $$.initialize(EbtSampler2DShadow, @1);
@@ -1200,8 +1210,8 @@ struct_specifier
     : STRUCT identifier LEFT_BRACE { context->enterStructDeclaration(@2, ImmutableString($2.string)); } struct_declaration_list RIGHT_BRACE {
         $$ = context->addStructure(@1, @2, ImmutableString($2.string), $5);
     }
-    | STRUCT LEFT_BRACE { context->enterStructDeclaration(@2, ImmutableString("")); } struct_declaration_list RIGHT_BRACE {
-        $$ = context->addStructure(@1, @$, ImmutableString(""), $4);
+    | STRUCT LEFT_BRACE { context->enterStructDeclaration(@2, kEmptyImmutableString); } struct_declaration_list RIGHT_BRACE {
+        $$ = context->addStructure(@1, @$, kEmptyImmutableString, $4);
     }
     ;
 
@@ -1304,11 +1314,11 @@ compound_statement_no_new_scope
 statement_list
     : statement {
         $$ = new TIntermBlock();
-        $$->appendStatement($1);
+        context->appendStatement($$, $1);
     }
     | statement_list statement {
         $$ = $1;
-        $$->appendStatement($2);
+        context->appendStatement($$, $2);
     }
     ;
 

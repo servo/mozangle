@@ -20,14 +20,16 @@
 #include "libANGLE/Thread.h"
 #include "libANGLE/formatutils.h"
 #include "libANGLE/renderer/EGLImplFactory.h"
+#include "third_party/trace_event/trace_event.h"
 
 namespace egl
 {
 
 SurfaceState::SurfaceState(const egl::Config *configIn, const AttributeMap &attributesIn)
-    : defaultFramebuffer(nullptr), config(configIn), attributes(attributesIn)
-{
-}
+    : label(nullptr), config(configIn), attributes(attributesIn), timestampsEnabled(false)
+{}
+
+SurfaceState::~SurfaceState() = default;
 
 Surface::Surface(EGLint surfaceType,
                  const egl::Config *config,
@@ -36,7 +38,7 @@ Surface::Surface(EGLint surfaceType,
     : FramebufferAttachmentObject(),
       mState(config, attributes),
       mImplementation(nullptr),
-      mCurrentCount(0),
+      mRefCount(0),
       mDestroyed(false),
       mType(surfaceType),
       mBuftype(buftype),
@@ -53,19 +55,20 @@ Surface::Surface(EGLint surfaceType,
       mFixedSize(false),
       mFixedWidth(0),
       mFixedHeight(0),
-      mTextureFormat(EGL_NO_TEXTURE),
+      mTextureFormat(TextureFormat::NoTexture),
       mTextureTarget(EGL_NO_TEXTURE),
       // FIXME: Determine actual pixel aspect ratio
       mPixelAspectRatio(static_cast<EGLint>(1.0 * EGL_DISPLAY_SCALING)),
       mRenderBuffer(EGL_BACK_BUFFER),
       mSwapBehavior(EGL_NONE),
       mOrientation(0),
-      mTexture(),
+      mTexture(nullptr),
       mColorFormat(config->renderTargetFormat),
       mDSFormat(config->depthStencilFormat),
       mInitState(gl::InitState::Initialized)
 {
-    mPostSubBufferRequested = (attributes.get(EGL_POST_SUB_BUFFER_SUPPORTED_NV, EGL_FALSE) == EGL_TRUE);
+    mPostSubBufferRequested =
+        (attributes.get(EGL_POST_SUB_BUFFER_SUPPORTED_NV, EGL_FALSE) == EGL_TRUE);
     mFlexibleSurfaceCompatibilityRequested =
         (attributes.get(EGL_FLEXIBLE_SURFACE_COMPATIBILITY_SUPPORTED_ANGLE, EGL_FALSE) == EGL_TRUE);
 
@@ -99,16 +102,14 @@ Surface::Surface(EGLint surfaceType,
 
     if (mType != EGL_WINDOW_BIT)
     {
-        mTextureFormat = static_cast<EGLenum>(attributes.get(EGL_TEXTURE_FORMAT, EGL_NO_TEXTURE));
+        mTextureFormat = attributes.getAsPackedEnum(EGL_TEXTURE_FORMAT, TextureFormat::NoTexture);
         mTextureTarget = static_cast<EGLenum>(attributes.get(EGL_TEXTURE_TARGET, EGL_NO_TEXTURE));
     }
 
     mOrientation = static_cast<EGLint>(attributes.get(EGL_SURFACE_ORIENTATION_ANGLE, 0));
 }
 
-Surface::~Surface()
-{
-}
+Surface::~Surface() {}
 
 rx::FramebufferAttachmentObjectImpl *Surface::getAttachmentImpl() const
 {
@@ -117,34 +118,13 @@ rx::FramebufferAttachmentObjectImpl *Surface::getAttachmentImpl() const
 
 Error Surface::destroyImpl(const Display *display)
 {
-    if (mState.defaultFramebuffer)
-    {
-        mState.defaultFramebuffer->destroyDefault(display);
-    }
     if (mImplementation)
     {
         mImplementation->destroy(display);
     }
 
-    if (mTexture.get())
-    {
-        if (mImplementation)
-        {
-            ANGLE_TRY(mImplementation->releaseTexImage(EGL_BACK_BUFFER));
-        }
-        auto glErr = mTexture->releaseTexImageFromSurface(display->getProxyContext());
-        if (glErr.isError())
-        {
-            return Error(EGL_BAD_SURFACE);
-        }
-        mTexture.set(nullptr, nullptr);
-    }
+    ASSERT(!mTexture);
 
-    if (mState.defaultFramebuffer)
-    {
-        mState.defaultFramebuffer->onDestroy(display->getProxyContext());
-    }
-    SafeDelete(mState.defaultFramebuffer);
     SafeDelete(mImplementation);
 
     delete this;
@@ -156,7 +136,7 @@ void Surface::postSwap(const gl::Context *context)
     if (mRobustResourceInitialization && mSwapBehavior != EGL_BUFFER_PRESERVED)
     {
         mInitState = gl::InitState::MayNeedInit;
-        onStateChange(context, angle::SubjectMessage::STATE_CHANGE);
+        onStateChange(context, angle::SubjectMessage::STORAGE_CHANGED);
     }
 }
 
@@ -167,10 +147,6 @@ Error Surface::initialize(const Display *display)
     // Initialized here since impl is nullptr in the constructor.
     // Must happen after implementation initialize for Android.
     mSwapBehavior = mImplementation->getSwapBehavior();
-
-    // Must happen after implementation initialize for OSX.
-    mState.defaultFramebuffer = createDefaultFramebuffer(display);
-    ASSERT(mState.defaultFramebuffer != nullptr);
 
     if (mBuftype == EGL_IOSURFACE_ANGLE)
     {
@@ -192,6 +168,12 @@ Error Surface::initialize(const Display *display)
         }
     }
 
+    if (mType == EGL_WINDOW_BIT && display->getExtensions().getFrameTimestamps)
+    {
+        mState.supportedCompositorTimings = mImplementation->getSupportedCompositorTimings();
+        mState.supportedTimestamps        = mImplementation->getSupportedTimestamps();
+    }
+
     return NoError();
 }
 
@@ -199,28 +181,44 @@ Error Surface::setIsCurrent(const gl::Context *context, bool isCurrent)
 {
     if (isCurrent)
     {
-        mCurrentCount++;
+        mRefCount++;
         return NoError();
     }
 
-    ASSERT(mCurrentCount > 0);
-    mCurrentCount--;
-    if (mCurrentCount == 0 && mDestroyed)
+    return releaseRef(context->getCurrentDisplay());
+}
+
+Error Surface::releaseRef(const Display *display)
+{
+    ASSERT(mRefCount > 0);
+    mRefCount--;
+    if (mRefCount == 0 && mDestroyed)
     {
-        ASSERT(context);
-        return destroyImpl(context->getCurrentDisplay());
+        ASSERT(display);
+        return destroyImpl(display);
     }
+
     return NoError();
 }
 
 Error Surface::onDestroy(const Display *display)
 {
     mDestroyed = true;
-    if (mCurrentCount == 0)
+    if (mRefCount == 0)
     {
         return destroyImpl(display);
     }
     return NoError();
+}
+
+void Surface::setLabel(EGLLabelKHR label)
+{
+    mState.label = label;
+}
+
+EGLLabelKHR Surface::getLabel() const
+{
+    return mState.label;
 }
 
 EGLint Surface::getType() const
@@ -230,6 +228,8 @@ EGLint Surface::getType() const
 
 Error Surface::swap(const gl::Context *context)
 {
+    TRACE_EVENT0("gpu.angle", "egl::Surface::swap");
+
     ANGLE_TRY(mImplementation->swap(context));
     postSwap(context);
     return NoError();
@@ -254,6 +254,11 @@ Error Surface::postSubBuffer(const gl::Context *context,
     }
 
     return mImplementation->postSubBuffer(context, x, y, width, height);
+}
+
+Error Surface::setPresentationTime(EGLnsecsANDROID time)
+{
+    return mImplementation->setPresentationTime(time);
 }
 
 Error Surface::querySurfacePointerANGLE(EGLint attribute, void **value)
@@ -292,6 +297,18 @@ void Surface::setSwapBehavior(EGLenum behavior)
     mSwapBehavior = behavior;
 }
 
+void Surface::setFixedWidth(EGLint width)
+{
+    mFixedWidth = width;
+    mImplementation->setFixedWidth(width);
+}
+
+void Surface::setFixedHeight(EGLint height)
+{
+    mFixedHeight = height;
+    mImplementation->setFixedHeight(height);
+}
+
 const Config *Surface::getConfig() const
 {
     return mState.config;
@@ -312,7 +329,7 @@ EGLenum Surface::getSwapBehavior() const
     return mSwapBehavior;
 }
 
-EGLenum Surface::getTextureFormat() const
+TextureFormat Surface::getTextureFormat() const
 {
     return mTextureFormat;
 }
@@ -382,17 +399,17 @@ EGLint Surface::getHeight() const
     return mFixedSize ? static_cast<EGLint>(mFixedHeight) : mImplementation->getHeight();
 }
 
-Error Surface::bindTexImage(const gl::Context *context, gl::Texture *texture, EGLint buffer)
+Error Surface::bindTexImage(gl::Context *context, gl::Texture *texture, EGLint buffer)
 {
-    ASSERT(!mTexture.get());
-    ANGLE_TRY(mImplementation->bindTexImage(texture, buffer));
+    ASSERT(!mTexture);
+    ANGLE_TRY(mImplementation->bindTexImage(context, texture, buffer));
 
-    auto glErr = texture->bindTexImageFromSurface(context, this);
-    if (glErr.isError())
+    if (texture->bindTexImageFromSurface(context, this) == angle::Result::Stop)
     {
         return Error(EGL_BAD_SURFACE);
     }
-    mTexture.set(context, texture);
+    mTexture = texture;
+    mRefCount++;
 
     return NoError();
 }
@@ -401,17 +418,12 @@ Error Surface::releaseTexImage(const gl::Context *context, EGLint buffer)
 {
     ASSERT(context);
 
-    ANGLE_TRY(mImplementation->releaseTexImage(buffer));
+    ANGLE_TRY(mImplementation->releaseTexImage(context, buffer));
 
-    ASSERT(mTexture.get());
-    auto glErr = mTexture->releaseTexImageFromSurface(context);
-    if (glErr.isError())
-    {
-        return Error(EGL_BAD_SURFACE);
-    }
-    mTexture.set(context, nullptr);
+    ASSERT(mTexture);
+    ANGLE_TRY(ResultToEGL(mTexture->releaseTexImageFromSurface(context)));
 
-    return NoError();
+    return releaseTexImageFromTexture(context);
 }
 
 Error Surface::getSyncValues(EGLuint64KHR *ust, EGLuint64KHR *msc, EGLuint64KHR *sbc)
@@ -419,10 +431,11 @@ Error Surface::getSyncValues(EGLuint64KHR *ust, EGLuint64KHR *msc, EGLuint64KHR 
     return mImplementation->getSyncValues(ust, msc, sbc);
 }
 
-void Surface::releaseTexImageFromTexture(const gl::Context *context)
+Error Surface::releaseTexImageFromTexture(const gl::Context *context)
 {
-    ASSERT(mTexture.get());
-    mTexture.set(context, nullptr);
+    ASSERT(mTexture);
+    mTexture = nullptr;
+    return releaseRef(context->getCurrentDisplay());
 }
 
 gl::Extents Surface::getAttachmentSize(const gl::ImageIndex & /*target*/) const
@@ -430,7 +443,7 @@ gl::Extents Surface::getAttachmentSize(const gl::ImageIndex & /*target*/) const
     return gl::Extents(getWidth(), getHeight(), 1);
 }
 
-const gl::Format &Surface::getAttachmentFormat(GLenum binding, const gl::ImageIndex &target) const
+gl::Format Surface::getAttachmentFormat(GLenum binding, const gl::ImageIndex &target) const
 {
     return (binding == GL_BACK ? mColorFormat : mDSFormat);
 }
@@ -440,15 +453,22 @@ GLsizei Surface::getAttachmentSamples(const gl::ImageIndex &target) const
     return getConfig()->samples;
 }
 
+bool Surface::isRenderable(const gl::Context *context,
+                           GLenum binding,
+                           const gl::ImageIndex &imageIndex) const
+{
+    return true;
+}
+
 GLuint Surface::getId() const
 {
     UNREACHABLE();
     return 0;
 }
 
-gl::Framebuffer *Surface::createDefaultFramebuffer(const Display *display)
+gl::Framebuffer *Surface::createDefaultFramebuffer(const gl::Context *context)
 {
-    return new gl::Framebuffer(display, this);
+    return new gl::Framebuffer(context, this);
 }
 
 gl::InitState Surface::initState(const gl::ImageIndex & /*imageIndex*/) const
@@ -461,6 +481,47 @@ void Surface::setInitState(const gl::ImageIndex & /*imageIndex*/, gl::InitState 
     mInitState = initState;
 }
 
+void Surface::setTimestampsEnabled(bool enabled)
+{
+    mImplementation->setTimestampsEnabled(enabled);
+    mState.timestampsEnabled = enabled;
+}
+
+bool Surface::isTimestampsEnabled() const
+{
+    return mState.timestampsEnabled;
+}
+
+const SupportedCompositorTiming &Surface::getSupportedCompositorTimings() const
+{
+    return mState.supportedCompositorTimings;
+}
+
+Error Surface::getCompositorTiming(EGLint numTimestamps,
+                                   const EGLint *names,
+                                   EGLnsecsANDROID *values) const
+{
+    return mImplementation->getCompositorTiming(numTimestamps, names, values);
+}
+
+Error Surface::getNextFrameId(EGLuint64KHR *frameId) const
+{
+    return mImplementation->getNextFrameId(frameId);
+}
+
+const SupportedTimestamps &Surface::getSupportedTimestamps() const
+{
+    return mState.supportedTimestamps;
+}
+
+Error Surface::getFrameTimestamps(EGLuint64KHR frameId,
+                                  EGLint numTimestamps,
+                                  const EGLint *timestamps,
+                                  EGLnsecsANDROID *values) const
+{
+    return mImplementation->getFrameTimestamps(frameId, numTimestamps, timestamps, values);
+}
+
 WindowSurface::WindowSurface(rx::EGLImplFactory *implFactory,
                              const egl::Config *config,
                              EGLNativeWindowType window,
@@ -470,9 +531,7 @@ WindowSurface::WindowSurface(rx::EGLImplFactory *implFactory,
     mImplementation = implFactory->createWindowSurface(mState, window, attribs);
 }
 
-WindowSurface::~WindowSurface()
-{
-}
+WindowSurface::~WindowSurface() {}
 
 PbufferSurface::PbufferSurface(rx::EGLImplFactory *implFactory,
                                const Config *config,
@@ -493,9 +552,7 @@ PbufferSurface::PbufferSurface(rx::EGLImplFactory *implFactory,
         implFactory->createPbufferFromClientBuffer(mState, buftype, clientBuffer, attribs);
 }
 
-PbufferSurface::~PbufferSurface()
-{
-}
+PbufferSurface::~PbufferSurface() {}
 
 PixmapSurface::PixmapSurface(rx::EGLImplFactory *implFactory,
                              const Config *config,
@@ -506,19 +563,13 @@ PixmapSurface::PixmapSurface(rx::EGLImplFactory *implFactory,
     mImplementation = implFactory->createPixmapSurface(mState, nativePixmap, attribs);
 }
 
-PixmapSurface::~PixmapSurface()
-{
-}
+PixmapSurface::~PixmapSurface() {}
 
 // SurfaceDeleter implementation.
 
-SurfaceDeleter::SurfaceDeleter(const Display *display) : mDisplay(display)
-{
-}
+SurfaceDeleter::SurfaceDeleter(const Display *display) : mDisplay(display) {}
 
-SurfaceDeleter::~SurfaceDeleter()
-{
-}
+SurfaceDeleter::~SurfaceDeleter() {}
 
 void SurfaceDeleter::operator()(Surface *surface)
 {

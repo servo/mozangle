@@ -11,9 +11,37 @@
 #include "compiler/translator/IntermNode.h"
 #include "compiler/translator/StructureHLSL.h"
 #include "compiler/translator/SymbolTable.h"
+#include "compiler/translator/util.h"
 
 namespace sh
 {
+
+namespace
+{
+
+void DisambiguateFunctionNameForParameterType(const TType &paramType,
+                                              TString *disambiguatingStringOut)
+{
+    // Parameter types are only added to function names if they are ambiguous according to the
+    // native HLSL compiler. Other parameter types are not added to function names to avoid
+    // making function names longer.
+    if (paramType.getObjectSize() == 4 && paramType.getBasicType() == EbtFloat)
+    {
+        // Disambiguation is needed for float2x2 and float4 parameters. These are the only
+        // built-in types that HLSL thinks are identical. float2x3 and float3x2 are different
+        // types, for example.
+        *disambiguatingStringOut += "_" + TypeString(paramType);
+    }
+    else if (paramType.getBasicType() == EbtStruct)
+    {
+        // Disambiguation is needed for struct parameters, since HLSL thinks that structs with
+        // the same fields but a different name are identical.
+        ASSERT(paramType.getStruct()->symbolType() != SymbolType::Empty);
+        *disambiguatingStringOut += "_" + TypeString(paramType);
+    }
+}
+
+}  // anonymous namespace
 
 const char *SamplerString(const TBasicType type)
 {
@@ -56,6 +84,8 @@ HLSLTextureGroup TextureGroup(const TBasicType type, TLayoutImageInternalFormat 
             return HLSL_TEXTURE_3D;
         case EbtSampler2DMS:
             return HLSL_TEXTURE_2D_MS;
+        case EbtSampler2DMSArray:
+            return HLSL_TEXTURE_2D_MS_ARRAY;
         case EbtISampler2D:
             return HLSL_TEXTURE_2D_INT4;
         case EbtISampler3D:
@@ -66,6 +96,8 @@ HLSLTextureGroup TextureGroup(const TBasicType type, TLayoutImageInternalFormat 
             return HLSL_TEXTURE_2D_ARRAY_INT4;
         case EbtISampler2DMS:
             return HLSL_TEXTURE_2D_MS_INT4;
+        case EbtISampler2DMSArray:
+            return HLSL_TEXTURE_2D_MS_ARRAY_INT4;
         case EbtUSampler2D:
             return HLSL_TEXTURE_2D_UINT4;
         case EbtUSampler3D:
@@ -76,6 +108,8 @@ HLSLTextureGroup TextureGroup(const TBasicType type, TLayoutImageInternalFormat 
             return HLSL_TEXTURE_2D_ARRAY_UINT4;
         case EbtUSampler2DMS:
             return HLSL_TEXTURE_2D_MS_UINT4;
+        case EbtUSampler2DMSArray:
+            return HLSL_TEXTURE_2D_MS_ARRAY_UINT4;
         case EbtSampler2DShadow:
             return HLSL_TEXTURE_2D_COMPARISON;
         case EbtSamplerCubeShadow:
@@ -277,6 +311,8 @@ const char *TextureString(const HLSLTextureGroup textureGroup)
             return "Texture3D<snorm float4>";
         case HLSL_TEXTURE_2D_MS:
             return "Texture2DMS<float4>";
+        case HLSL_TEXTURE_2D_MS_ARRAY:
+            return "Texture2DMSArray<float4>";
         case HLSL_TEXTURE_2D_INT4:
             return "Texture2D<int4>";
         case HLSL_TEXTURE_3D_INT4:
@@ -285,6 +321,8 @@ const char *TextureString(const HLSLTextureGroup textureGroup)
             return "Texture2DArray<int4>";
         case HLSL_TEXTURE_2D_MS_INT4:
             return "Texture2DMS<int4>";
+        case HLSL_TEXTURE_2D_MS_ARRAY_INT4:
+            return "Texture2DMSArray<int4>";
         case HLSL_TEXTURE_2D_UINT4:
             return "Texture2D<uint4>";
         case HLSL_TEXTURE_3D_UINT4:
@@ -293,6 +331,8 @@ const char *TextureString(const HLSLTextureGroup textureGroup)
             return "Texture2DArray<uint4>";
         case HLSL_TEXTURE_2D_MS_UINT4:
             return "Texture2DMS<uint4>";
+        case HLSL_TEXTURE_2D_MS_ARRAY_UINT4:
+            return "Texture2DMSArray<uint4>";
         case HLSL_TEXTURE_2D_COMPARISON:
             return "Texture2D";
         case HLSL_TEXTURE_CUBE_COMPARISON:
@@ -341,6 +381,8 @@ const char *TextureGroupSuffix(const HLSLTextureGroup type)
             return "3D_snorm_float4_";
         case HLSL_TEXTURE_2D_MS:
             return "2DMS";
+        case HLSL_TEXTURE_2D_MS_ARRAY:
+            return "2DMSArray";
         case HLSL_TEXTURE_2D_INT4:
             return "2D_int4_";
         case HLSL_TEXTURE_3D_INT4:
@@ -349,6 +391,8 @@ const char *TextureGroupSuffix(const HLSLTextureGroup type)
             return "2DArray_int4_";
         case HLSL_TEXTURE_2D_MS_INT4:
             return "2DMS_int4_";
+        case HLSL_TEXTURE_2D_MS_ARRAY_INT4:
+            return "2DMSArray_int4_";
         case HLSL_TEXTURE_2D_UINT4:
             return "2D_uint4_";
         case HLSL_TEXTURE_3D_UINT4:
@@ -357,6 +401,8 @@ const char *TextureGroupSuffix(const HLSLTextureGroup type)
             return "2DArray_uint4_";
         case HLSL_TEXTURE_2D_MS_UINT4:
             return "2DMS_uint4_";
+        case HLSL_TEXTURE_2D_MS_ARRAY_UINT4:
+            return "2DMSArray_uint4_";
         case HLSL_TEXTURE_2D_COMPARISON:
             return "2D_comparison";
         case HLSL_TEXTURE_CUBE_COMPARISON:
@@ -767,7 +813,7 @@ const char *RWTextureTypeSuffix(const TBasicType type,
         }
         default:
             // All other types are identified by their group suffix
-            return TextureGroupSuffix(type, imageInternalFormat);
+            return RWTextureGroupSuffix(type, imageInternalFormat);
     }
 #if !UNREACHABLE_IS_NORETURN
     UNREACHABLE();
@@ -802,13 +848,22 @@ TString Decorate(const ImmutableString &string)
 
 TString DecorateVariableIfNeeded(const TVariable &variable)
 {
-    if (variable.symbolType() == SymbolType::AngleInternal)
+    if (variable.symbolType() == SymbolType::AngleInternal ||
+        variable.symbolType() == SymbolType::Empty)
     {
+        // Besides handling internal variables, we generate names for nameless parameters here.
         const ImmutableString &name = variable.name();
         // The name should not have a prefix reserved for user-defined variables or functions.
         ASSERT(!name.beginsWith("f_"));
         ASSERT(!name.beginsWith("_"));
         return TString(name.data());
+    }
+    // For user defined variables, combine variable name with unique id
+    // so variables of the same name in different scopes do not get overwritten.
+    else if (variable.symbolType() == SymbolType::UserDefined &&
+             variable.getType().getQualifier() == EvqTemporary)
+    {
+        return Decorate(variable.name()) + str(variable.uniqueId().get());
     }
     else
     {
@@ -920,7 +975,8 @@ TString TypeString(const TType &type)
             case EbtSamplerExternalOES:
                 return "sampler2D";
             case EbtAtomicCounter:
-                return "atomic_uint";
+                // Multiple atomic_uints will be implemented as a single RWByteAddressBuffer
+                return "RWByteAddressBuffer";
             default:
                 break;
         }
@@ -1025,29 +1081,26 @@ const char *QualifierString(TQualifier qualifier)
     return "";
 }
 
-TString DisambiguateFunctionName(const TIntermSequence *parameters)
+TString DisambiguateFunctionName(const TFunction *func)
 {
     TString disambiguatingString;
-    for (auto parameter : *parameters)
+    size_t paramCount = func->getParamCount();
+    for (size_t i = 0; i < paramCount; ++i)
     {
-        const TType &paramType = parameter->getAsTyped()->getType();
-        // Parameter types are only added to function names if they are ambiguous according to the
-        // native HLSL compiler. Other parameter types are not added to function names to avoid
-        // making function names longer.
-        if (paramType.getObjectSize() == 4 && paramType.getBasicType() == EbtFloat)
-        {
-            // Disambiguation is needed for float2x2 and float4 parameters. These are the only
-            // built-in types that HLSL thinks are identical. float2x3 and float3x2 are different
-            // types, for example.
-            disambiguatingString += "_" + TypeString(paramType);
-        }
-        else if (paramType.getBasicType() == EbtStruct)
-        {
-            // Disambiguation is needed for struct parameters, since HLSL thinks that structs with
-            // the same fields but a different name are identical.
-            ASSERT(paramType.getStruct()->symbolType() != SymbolType::Empty);
-            disambiguatingString += "_" + TypeString(paramType);
-        }
+        DisambiguateFunctionNameForParameterType(func->getParam(i)->getType(),
+                                                 &disambiguatingString);
+    }
+    return disambiguatingString;
+}
+
+TString DisambiguateFunctionName(const TIntermSequence *args)
+{
+    TString disambiguatingString;
+    for (TIntermNode *arg : *args)
+    {
+        ASSERT(arg->getAsTyped());
+        DisambiguateFunctionNameForParameterType(arg->getAsTyped()->getType(),
+                                                 &disambiguatingString);
     }
     return disambiguatingString;
 }

@@ -75,13 +75,21 @@ fn build_angle() {
     }
 
     // Hard-code lines like `if CONFIG['OS_ARCH'] == 'Darwin':` in moz.build files
-    for &(os, source) in &[
-        ("darwin", "gfx/angle/checkout/src/common/system_utils_mac.cpp"),
-        ("linux", "gfx/angle/checkout/src/common/system_utils_linux.cpp"),
-        ("windows", "gfx/angle/checkout/src/common/system_utils_win.cpp"),
+    for &(os, sources) in &[
+        ("darwin", &[
+            "gfx/angle/checkout/src/common/system_utils_mac.cpp",
+            "gfx/angle/checkout/src/common/system_utils_posix.cpp",
+        ][..]),
+        ("linux", &[
+            "gfx/angle/checkout/src/common/system_utils_linux.cpp",
+            "gfx/angle/checkout/src/common/system_utils_posix.cpp",
+        ][..]),
+        ("windows", &["gfx/angle/checkout/src/common/system_utils_win.cpp"][..]),
     ] {
         if target.contains(os) {
-            build.file(source);
+            for source in sources {
+                build.file(source);
+            }
             break
         }
     }
@@ -90,13 +98,18 @@ fn build_angle() {
         .file("src/shaders/glslang-c.cpp")
         .cpp(true)
         .warnings(false)
-        .flag("-std=c++11")
-        .flag_if_supported("-msse2")  // GNU
-        .flag_if_supported("-arch:SSE2")  // MSVC
+        .flag("-std=c++14")
         .flag_if_supported("/wd4100")
         .flag_if_supported("/wd4127")
-        .flag_if_supported("/wd9002")
-        .compile("angle");
+        .flag_if_supported("/wd9002");
+
+    if target.contains("x86_64") || target.contains("i686") {
+        build
+            .flag_if_supported("-msse2")  // GNU
+            .flag_if_supported("-arch:SSE2");  // MSVC
+    }
+
+    build.compile("angle");
 
     if egl {
         build_egl(&target);
