@@ -27,6 +27,12 @@ fn build_egl(target: &str) {
         build.include(fixup_path(file));
     }
 
+    if target.contains("x86_64") || target.contains("i686") {
+        build
+            .flag_if_supported("-msse2")  // GNU
+            .flag_if_supported("-arch:SSE2");  // MSVC
+    }
+
     let mut cmd = build.get_compiler().to_command();
     let out = env::var("OUT_DIR").unwrap();
     let out = Path::new(&out);
