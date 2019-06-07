@@ -27,12 +27,17 @@ fn build_egl(target: &str) {
         build.include(fixup_path(file));
     }
 
+    for file in data.sources {
+        build.file(fixup_path(file));
+    }
+
     if target.contains("x86_64") || target.contains("i686") {
         build
             .flag_if_supported("-msse2")  // GNU
             .flag_if_supported("-arch:SSE2");  // MSVC
     }
 
+    // Build DLL.
     let mut cmd = build.get_compiler().to_command();
     let out = env::var("OUT_DIR").unwrap();
     let out = Path::new(&out);
@@ -40,10 +45,6 @@ fn build_egl(target: &str) {
 
     for lib in data.os_libs {
         cmd.arg(&format!("{}.lib", lib));
-    }
-
-    for file in data.sources {
-        cmd.arg(fixup_path(file));
     }
 
     cmd.arg("/wd4100");
@@ -54,6 +55,9 @@ fn build_egl(target: &str) {
     cmd.arg("/DEF:gfx/angle/checkout/src/libEGL/libEGL.def");
     let status = cmd.status();
     assert!(status.unwrap().success());
+
+    // Build lib.
+    build.compile("EGL");
 }
 
 fn build_angle() {
