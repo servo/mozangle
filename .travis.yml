@@ -10,5 +10,5 @@ before_install:
   - if [ "$TRAVIS_OS_NAME" = "linux" ]; then export CXX=clang++; fi
 
 script:
-  - cargo test --verbose
-  - cargo test --verbose --features egl  # Doesn’t do anything, but should still build
+  - cargo test --release --verbose
+  - cargo test --release --verbose --features egl  # Doesn’t do anything, but should still build
