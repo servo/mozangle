@@ -7,7 +7,7 @@ ANGLE = path.join(REPO, "gfx", "angle")
 
 def run():
     data = {}
-    for lib in ["translator", "libANGLE", "libEGL"]:
+    for lib in ["translator", "libANGLE", "libEGL", "libGLESv2"]:
         data[lib] = {
             "DEFINES": {},
             "LOCAL_INCLUDES": [],
@@ -66,6 +66,7 @@ def write(data, f):
     write_lib(b"TRANSLATOR", data["translator"], f)
     write_lib(b"ANGLE", data["libANGLE"], f)
     write_lib(b"EGL", data["libEGL"], f)
+    write_lib(b"GLESv2", data["libGLESv2"], f)
 
 def no_platform_sources(source):
     # Filter out any accidental inclusion of platform-specific source files.

@@ -1,4 +1,5 @@
 #[macro_use] extern crate lazy_static;
+#[cfg(test)] extern crate dlopen;
 
 pub mod shaders;
 #[cfg(test)] mod tests;

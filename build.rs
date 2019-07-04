@@ -1,3 +1,5 @@
+#![allow(non_upper_case_globals)]
+
 extern crate cc;
 #[cfg(feature = "egl")] extern crate gl_generator;
 
@@ -11,10 +13,58 @@ fn main() {
     generate_bindings();
 }
 
+fn build_glesv2(target: &str) {
+    let mut build = cc::Build::new();
+
+    let data = build_data::GLESv2;
+    for &(k, v) in data.defines {
+        build.define(k, v);
+    }
+
+    for file in data.includes {
+        build.include(fixup_path(file));
+    }
+
+    for file in data.sources {
+        build.file(fixup_path(file));
+    }
+
+    if target.contains("x86_64") || target.contains("i686") {
+        build
+            .flag_if_supported("-msse2")  // GNU
+            .flag_if_supported("-arch:SSE2");  // MSVC
+    }
+
+    // Build DLL.
+    let mut cmd = build.get_compiler().to_command();
+    let out = env::var("OUT_DIR").unwrap();
+    let out = Path::new(&out);
+    cmd.arg(out.join("angle.lib"));
+
+    for lib in data.os_libs {
+        cmd.arg(&format!("{}.lib", lib));
+    }
+
+    for file in data.sources {
+        cmd.arg(fixup_path(file));
+    }
+
+    cmd.arg("/wd4100");
+    cmd.arg("/wd4127");
+    cmd.arg("/LD");
+    cmd.arg(&format!("/Fe{}", out.join("libGLESv2").display()));
+    cmd.arg("/link");
+    cmd.arg("/DEF:gfx/angle/checkout/src/libGLESv2/libGLESv2_autogen.def");
+    let status = cmd.status();
+    assert!(status.unwrap().success());
+}
+
 fn build_egl(target: &str) {
     if !target.contains("windows") {
         return;
     }
+
+    build_glesv2(target);
 
     let mut build = cc::Build::new();
 

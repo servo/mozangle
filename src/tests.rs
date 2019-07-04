@@ -13,13 +13,22 @@ fn test_linkage() {
     init();
 }
 
-// TODO(mozangle#16): This test needs to perform dynamic linkage checks on the generated libEGL.dll.
-/*#[cfg(all(windows, feature = "egl"))]
+#[cfg(all(windows, feature = "egl"))]
+#[test]
+fn test_egl_dll_linkage() {
+    use dlopen::symbor::Library;
+    use egl::ffi;
+    let lib = Library::open("libEGL.dll").unwrap();
+    let GetError = unsafe { lib.symbol::<unsafe extern "C" fn() -> u32>("eglGetError") }.unwrap();
+    assert_eq!(unsafe { GetError() }, ffi::SUCCESS);
+}
+
+#[cfg(all(windows, feature = "egl"))]
 #[test]
 fn test_egl_linkage() {
     use egl::ffi;
     assert_eq!(unsafe { ffi::GetError() } as u32, ffi::SUCCESS);
-}*/
+}
 
 #[test]
 fn test_translation_complex() {
