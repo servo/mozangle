@@ -37,7 +37,7 @@ this crate only configures the Direct3D 11 rendering backend.
 
 ```toml
 [dependencies]
-mozangle = { version = "0.1", features = ["egl"] }
+mozangle = { version = "0.2", features = ["egl"] }
 ```
 
 
