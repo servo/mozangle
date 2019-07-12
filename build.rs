@@ -1,5 +1,8 @@
+#![allow(non_upper_case_globals)]
+
 extern crate cc;
 #[cfg(feature = "egl")] extern crate gl_generator;
+extern crate walkdir;
 
 use std::env;
 use std::path::{Path, PathBuf};
@@ -11,10 +14,61 @@ fn main() {
     generate_bindings();
 }
 
+fn build_glesv2(target: &str) {
+    let mut build = cc::Build::new();
+
+    let data = build_data::GLESv2;
+    for &(k, v) in data.defines {
+        build.define(k, v);
+    }
+
+    for file in data.includes {
+        build.include(fixup_path(file));
+    }
+
+    for file in data.sources {
+        build.file(fixup_path(file));
+    }
+
+    if target.contains("x86_64") || target.contains("i686") {
+        build
+            .flag_if_supported("-msse2")  // GNU
+            .flag_if_supported("-arch:SSE2");  // MSVC
+    }
+    
+    build
+        .flag_if_supported("/wd4100")
+        .flag_if_supported("/wd4127")
+        .flag_if_supported("/wd9002");
+
+    // Build DLL.
+    let mut cmd = build.get_compiler().to_command();
+    let out = env::var("OUT_DIR").unwrap();
+    let out = Path::new(&out);
+    cmd.arg(out.join("angle.lib"));
+
+    for lib in data.os_libs {
+        cmd.arg(&format!("{}.lib", lib));
+    }
+
+    for file in data.sources {
+        cmd.arg(fixup_path(file));
+    }
+
+    cmd.arg("/LD");
+    cmd.arg(&format!("/Fe{}", out.join("libGLESv2").display()));
+    cmd.arg("/link");
+    cmd.arg("/DEF:gfx/angle/checkout/src/libGLESv2/libGLESv2_autogen.def");
+    let status = cmd.status();
+    assert!(status.unwrap().success());
+}
+
 fn build_egl(target: &str) {
     if !target.contains("windows") {
         return;
     }
+
+    build_glesv2(target);
 
     let mut build = cc::Build::new();
 
@@ -37,6 +91,11 @@ fn build_egl(target: &str) {
             .flag_if_supported("-arch:SSE2");  // MSVC
     }
 
+    build
+        .flag_if_supported("/wd4100")
+        .flag_if_supported("/wd4127")
+        .flag_if_supported("/wd9002");
+
     // Build DLL.
     let mut cmd = build.get_compiler().to_command();
     let out = env::var("OUT_DIR").unwrap();
@@ -51,8 +110,6 @@ fn build_egl(target: &str) {
         cmd.arg(fixup_path(file));
     }
 
-    cmd.arg("/wd4100");
-    cmd.arg("/wd4127");
     cmd.arg("/LD");
     cmd.arg(&format!("/Fe{}", out.join("libEGL").display()));
     cmd.arg("/link");
@@ -112,7 +169,7 @@ fn build_angle() {
         .file("src/shaders/glslang-c.cpp")
         .cpp(true)
         .warnings(false)
-        .flag("-std=c++14")
+        .flag_if_supported("-std=c++14")
         .flag_if_supported("/wd4100")
         .flag_if_supported("/wd4127")
         .flag_if_supported("/wd9002");
@@ -133,7 +190,10 @@ fn build_angle() {
         println!("cargo:rustc-link-lib={}", lib);
     }
     println!("cargo:rerun-if-changed=src/shaders/glslang-c.cpp");
-    println!("cargo:rerun-if-changed=gfx");
+    for entry in walkdir::WalkDir::new("gfx") {
+        let entry = entry.unwrap();
+        println!("{}", format!("cargo:rerun-if-changed={}", entry.path().display()));
+    }
 }
 
 fn fixup_path(path: &str) -> String {
