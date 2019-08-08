@@ -14,7 +14,7 @@ lazy_static = "1.0"
 dlopen = "0.1"
 
 [build-dependencies]
-cc = { version = "1.0.5" }
+cc = { version = "1.0.5", features = ["parallel"] }
 gl_generator = { version = "0.10.0", optional = true }
 walkdir = "2"
 
