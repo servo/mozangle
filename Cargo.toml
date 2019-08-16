@@ -1,6 +1,6 @@
 [package]
 name = "mozangle"
-version = "0.2.3"
+version = "0.2.4"
 authors = ["The ANGLE Project Authors", "The Servo Project Developers"]
 license = " BSD-3-Clause"
 description = "Mozilla’s fork of Google ANGLE, repackaged as a Rust crate "
