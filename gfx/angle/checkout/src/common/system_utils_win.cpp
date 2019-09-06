@@ -131,6 +131,7 @@ const char *GetPathSeparator()
     return ";";
 }
 
+#ifndef ANGLE_ENABLE_WINDOWS_STORE
 bool RunApp(const std::vector<const char *> &args,
             std::string *stdoutOut,
             std::string *stderrOut,
@@ -237,7 +238,9 @@ bool RunApp(const std::vector<const char *> &args,
 
     return success;
 }
+#endif
 
+#ifndef ANGLE_ENABLE_WINDOWS_STORE
 class Win32Library : public Library
 {
   public:
@@ -279,4 +282,5 @@ Library *OpenSharedLibrary(const char *libraryName)
 {
     return new Win32Library(libraryName);
 }
+#endif
 }  // namespace angle

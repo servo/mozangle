@@ -48,5 +48,6 @@ To update:
 
 * Remove `gfx/angle` entirely
 * Copy a new version of it from mozilla-central
+* Apply any patches present in the `patches` directory
 * Run `python3 generate_build_data.py`
 * In the commit message, include the mozilla-central commit hash.
