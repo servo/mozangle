@@ -11,4 +11,4 @@ install:
 build: false
 test_script:
   - cargo test --verbose
-  - cargo test --verbose --features egl
+  - cargo test --verbose --features "egl build_dlls"

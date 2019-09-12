@@ -14,7 +14,7 @@ fn main() {
     generate_bindings();
 }
 
-fn build_glesv2(target: &str) {
+fn build_glesv2_dll(target: &str) {
     let mut build = cc::Build::new();
 
     let data = build_data::GLESv2;
@@ -68,7 +68,9 @@ fn build_egl(target: &str) {
         return;
     }
 
-    build_glesv2(target);
+    if cfg!(feature = "build_dlls") {
+        build_glesv2_dll(target);
+    }
 
     let mut build = cc::Build::new();
 
@@ -96,26 +98,28 @@ fn build_egl(target: &str) {
         .flag_if_supported("/wd4127")
         .flag_if_supported("/wd9002");
 
-    // Build DLL.
-    let mut cmd = build.get_compiler().to_command();
-    let out = env::var("OUT_DIR").unwrap();
-    let out = Path::new(&out);
-    cmd.arg(out.join("angle.lib"));
+    if cfg!(feature = "build_dlls") {
+        // Build DLL.
+        let mut cmd = build.get_compiler().to_command();
+        let out = env::var("OUT_DIR").unwrap();
+        let out = Path::new(&out);
+        cmd.arg(out.join("angle.lib"));
 
-    for lib in data.os_libs {
-        cmd.arg(&format!("{}.lib", lib));
+        for lib in data.os_libs {
+            cmd.arg(&format!("{}.lib", lib));
+        }
+
+        for file in data.sources {
+            cmd.arg(fixup_path(file));
+        }
+
+        cmd.arg("/LD");
+        cmd.arg(&format!("/Fe{}", out.join("libEGL").display()));
+        cmd.arg("/link");
+        cmd.arg("/DEF:gfx/angle/checkout/src/libEGL/libEGL.def");
+        let status = cmd.status();
+        assert!(status.unwrap().success());
     }
-
-    for file in data.sources {
-        cmd.arg(fixup_path(file));
-    }
-
-    cmd.arg("/LD");
-    cmd.arg(&format!("/Fe{}", out.join("libEGL").display()));
-    cmd.arg("/link");
-    cmd.arg("/DEF:gfx/angle/checkout/src/libEGL/libEGL.def");
-    let status = cmd.status();
-    assert!(status.unwrap().success());
 
     // Build lib.
     build.compile("EGL");
