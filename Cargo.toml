@@ -1,6 +1,6 @@
 [package]
 name = "mozangle"
-version = "0.2.7"
+version = "0.3.0"
 authors = ["The ANGLE Project Authors", "The Servo Project Developers"]
 license = " BSD-3-Clause"
 description = "Mozilla’s fork of Google ANGLE, repackaged as a Rust crate "
@@ -20,3 +20,4 @@ walkdir = "2"
 
 [features]
 egl = ["gl_generator"]  # Only does anything on Windows
+build_dlls = []
