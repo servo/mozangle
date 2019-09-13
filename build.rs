@@ -78,6 +78,9 @@ fn build_egl(target: &str) {
     for &(k, v) in data.defines {
         build.define(k, v);
     }
+    if cfg!(feature = "build_dlls") {
+        build.define("ANGLE_USE_EGL_LOADER", None);
+    }
 
     for file in data.includes {
         build.include(fixup_path(file));

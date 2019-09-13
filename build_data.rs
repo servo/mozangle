@@ -874,7 +874,6 @@ pub const EGL: Data = Data {
         ("ANGLE_GENERATE_SHADER_DEBUG_INFO", None),
         ("ANGLE_GLESV2_LIBRARY_NAME", Some("\"libGLESv2\"")),
         ("ANGLE_SKIP_DXGI_1_2_CHECK", None),
-        ("ANGLE_USE_EGL_LOADER", None),
         ("DYNAMIC_ANNOTATIONS_ENABLED", Some("1")),
         ("EGLAPI", Some("")),
         ("EGL_EGLEXT_PROTOTYPES", None),
