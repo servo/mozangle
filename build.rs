@@ -176,7 +176,6 @@ fn build_angle() {
         .file("src/shaders/glslang-c.cpp")
         .cpp(true)
         .warnings(false)
-        .flag_if_supported("-std=c++14")
         .flag_if_supported("/wd4100")
         .flag_if_supported("/wd4127")
         .flag_if_supported("/wd9002");
