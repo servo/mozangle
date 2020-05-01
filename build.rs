@@ -132,6 +132,11 @@ fn build_angle() {
     let target = env::var("TARGET").unwrap();
     let egl = env::var("CARGO_FEATURE_EGL").is_ok() && target.contains("windows");
 
+    // Including this as in the cc-rs build flags also applies it to C files,
+    // which triggers errors in some configurations.
+    let cxxflags = env::var("CXXFLAGS").unwrap_or_default();
+    env::set_var("CXXFLAGS", &format!("{} -std=c++14"));
+    
     let data = if egl { build_data::ANGLE } else { build_data::TRANSLATOR };
 
     let repo = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
