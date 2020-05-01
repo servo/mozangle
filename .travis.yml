@@ -7,7 +7,7 @@ os:
   - osx
 
 before_install:
-  - if [ "$TRAVIS_OS_NAME" = "linux" ]; then export CXX=clang++; export RUSTC_WRAPPER=sccache; fi
+  - if [ "$TRAVIS_OS_NAME" = "linux" ]; then export CXX=clang++; fi
 
 script:
   - cargo test --verbose
