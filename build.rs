@@ -135,7 +135,7 @@ fn build_angle() {
     // Including this as in the cc-rs build flags also applies it to C files,
     // which triggers errors in some configurations.
     let cxxflags = env::var("CXXFLAGS").unwrap_or_default();
-    env::set_var("CXXFLAGS", &format!("{} -std=c++14"));
+    env::set_var("CXXFLAGS", &format!("{} -std=c++14", cxxflags));
     
     let data = if egl { build_data::ANGLE } else { build_data::TRANSLATOR };
 
