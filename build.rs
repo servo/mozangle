@@ -123,6 +123,10 @@ fn build_egl(target: &str) {
         let status = cmd.status();
         assert!(status.unwrap().success());
     }
+    
+    // We're already outputting metadata for libangle.
+    // Including both EGL.lib and angle.lib confuses the linker.
+    build.cargo_metadata(false);
 
     // Build lib.
     build.compile("EGL");
