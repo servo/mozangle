@@ -47,6 +47,30 @@ pub mod egl {
         pub const D3D_TEXTURE_ANGLE: types::EGLenum = 0x33A3;
         pub const FLEXIBLE_SURFACE_COMPATIBILITY_SUPPORTED_ANGLE: types::EGLenum = 0x33A6;
 
+        // EGL_ANGLE_platform_angle
+        pub const PLATFORM_ANGLE_ANGLE: types::EGLenum = 0x3202;
+        pub const PLATFORM_ANGLE_TYPE_ANGLE: types::EGLenum = 0x3203;
+        pub const PLATFORM_ANGLE_MAX_VERSION_MAJOR_ANGLE: types::EGLenum = 0x3204;
+        pub const PLATFORM_ANGLE_MAX_VERSION_MINOR_ANGLE: types::EGLenum = 0x3205;
+        pub const PLATFORM_ANGLE_TYPE_DEFAULT_ANGLE: types::EGLenum = 0x3206;
+        pub const PLATFORM_ANGLE_DEBUG_LAYERS_ENABLED_ANGLE: types::EGLenum = 0x3451;
+        pub const PLATFORM_ANGLE_DEVICE_TYPE_ANGLE: types::EGLenum = 0x3209;
+        pub const PLATFORM_ANGLE_DEVICE_TYPE_HARDWARE_ANGLE: types::EGLenum = 0x320A;
+        pub const PLATFORM_ANGLE_DEVICE_TYPE_NULL_ANGLE: types::EGLenum = 0x345E;
+        pub const PLATFORM_ANGLE_NATIVE_PLATFORM_TYPE_ANGLE: types::EGLenum = 0x348F;
+
+        // EGL_ANGLE_feature_control
+        pub const FEATURE_NAME_ANGLE: types::EGLenum = 0x3460;
+        pub const FEATURE_CATEGORY_ANGLE: types::EGLenum = 0x3461;
+        pub const FEATURE_DESCRIPTION_ANGLE: types::EGLenum = 0x3462;
+        pub const FEATURE_BUG_ANGLE: types::EGLenum = 0x3463;
+        pub const FEATURE_STATUS_ANGLE: types::EGLenum = 0x3464;
+        pub const FEATURE_COUNT_ANGLE: types::EGLenum = 0x3465;
+        pub const FEATURE_OVERRIDES_ENABLED_ANGLE: types::EGLenum = 0x3466;
+        pub const FEATURE_OVERRIDES_DISABLED_ANGLE: types::EGLenum = 0x3467;
+        pub const FEATURE_CONDITION_ANGLE: types::EGLenum = 0x3468;
+        pub const FEATURE_ALL_DISABLED_ANGLE: types::EGLenum = 0x3469;
+
         extern "C" {
             pub fn eglCreateDeviceANGLE(
                 device_type: types::EGLenum,
