@@ -92,6 +92,7 @@ pub const SH_INIT_SHARED_VARIABLES: ShCompileOptions = 2199023255552;
 #[repr(u32)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum ShArrayIndexClampingStrategy {
+    SH_UNINITIALIZED = 0,
     SH_CLAMP_WITH_CLAMP_INTRINSIC = 1,
     SH_CLAMP_WITH_USER_DEFINED_INT_CLAMP_FUNCTION = 2,
 }
