@@ -24,6 +24,7 @@ pub mod ffi {
             each: unsafe extern fn(*mut c_void, *const c_char, usize, *const c_char, usize),
             closure_each: *mut c_void
         );
+        pub fn GLSLangGetNumUnpackedVaryingVectors(handle: ShHandle) -> c_int;
     }
 }
 
@@ -291,6 +292,12 @@ impl ShaderValidator {
             panic!("Non-UTF-8 uniform name in ANGLE shader: {}", err)
         }
         closure.map
+    }
+
+    pub fn get_num_unpacked_varying_vectors(&self) -> i32 {
+        unsafe {
+            GLSLangGetNumUnpackedVaryingVectors(self.handle)
+        }
     }
 }
 

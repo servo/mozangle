@@ -1,4 +1,5 @@
 #include "GLSLANG/ShaderLang.h"
+#include "common/utilities.h"
 
 extern "C"
 int GLSLangInitialize() {
@@ -90,4 +91,25 @@ void GLSLangIterUniformNameMapping(const ShHandle handle, StrPairFunction each, 
             uniform.mappedName.data(), uniform.mappedName.length()
         );
     }
+}
+
+// Returns the number of vectors that the shader's active varyings fit
+// in to without additional packing. Can be used to test whether a
+// shader will compile on drivers that do not perform spec-compliant
+// packing. This contrasts with sh::CheckVariablesWithinPackingLimits
+// which does pack the varyings in accordance with the spec.
+extern "C"
+int GLSLangGetNumUnpackedVaryingVectors(const ShHandle handle) {
+  int total_rows = 0;
+  const std::vector<sh::Varying>* varyings = sh::GetVaryings(handle);
+
+  if (varyings) {
+    for (const auto& varying : *varyings) {
+      if (varying.active) {
+        total_rows += gl::VariableRowCount(varying.type) * varying.getArraySizeProduct();
+      }
+    }
+  }
+
+  return total_rows;
 }
