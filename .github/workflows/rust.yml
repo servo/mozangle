@@ -2,23 +2,30 @@ name: Rust
 
 on:
   push:
-    branches: [ master ]
   pull_request:
-    branches: [ master ]
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   build:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ["windows-latest", "ubuntu-latest", "macos-latest"]
+    runs-on: ${{ matrix.os }}
     steps:
-    - uses: actions/checkout@v2
-    - name: Install latest nightly
-      uses: actions-rs/toolchain@v1
-      with:
-        toolchain: 1.45.0
-        default: true
+    - uses: actions/checkout@v3
+    - uses: dtolnay/rust-toolchain@1.45.0
+      if: contains(matrix.os, 'windows')
     - name: Run tests
+      if: contains(matrix.os, 'windows')
       run: cargo test --verbose --features "egl build_dlls"
+    - uses: dtolnay/rust-toolchain@stable
+      if: ${{ !contains(matrix.os, 'windows') }}
+    - name: Run test (POSIX)
+      if: ${{ !contains(matrix.os, 'windows') }}
+      run: |
+        cargo test --verbose
+        cargo test --verbose --features egl
 
