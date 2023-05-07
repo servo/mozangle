@@ -108,4 +108,6 @@
 #    endif  // defined(__GNUC__) || defined(__clang__)
 #endif      // !defined(ANGLE_LIKELY) || !defined(ANGLE_UNLIKELY)
 
+#include <cstdint>
+
 #endif  // COMMON_PLATFORM_H_
