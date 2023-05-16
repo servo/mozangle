@@ -16,13 +16,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v3
-    - uses: dtolnay/rust-toolchain@1.45.0
-      if: contains(matrix.os, 'windows')
+    - uses: dtolnay/rust-toolchain@stable
     - name: Run tests
       if: contains(matrix.os, 'windows')
       run: cargo test --verbose --features "egl build_dlls"
-    - uses: dtolnay/rust-toolchain@stable
-      if: ${{ !contains(matrix.os, 'windows') }}
     - name: Run test (POSIX)
       if: ${{ !contains(matrix.os, 'windows') }}
       run: |
