@@ -124,6 +124,8 @@ fn build_egl(target: &str) {
         assert!(status.unwrap().success());
     }
 
+    build.link_lib_modifier("-whole-archive");
+
     // Build lib.
     build.compile("EGL");
 }
@@ -186,6 +188,8 @@ fn build_angle() {
             .flag_if_supported("-msse2")  // GNU
             .flag_if_supported("-arch:SSE2");  // MSVC
     }
+
+    build.link_lib_modifier("-whole-archive");
 
     build.compile("angle");
 
