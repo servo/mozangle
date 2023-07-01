@@ -10,42 +10,70 @@ use std::path::{Path, PathBuf};
 mod build_data;
 
 fn main() {
-    build_angle();
-    generate_bindings();
+    let target = env::var("TARGET").unwrap();
+    let egl = env::var("CARGO_FEATURE_EGL").is_ok() && target.contains("windows");
+
+    if cfg!(feature = "egl") && !target.contains("windows") {
+        panic!("Do not know how to build EGL support for a non-Windows platform.");
+    }
+
+    if cfg!(feature = "build_dlls") && !target.contains("windows") {
+        panic!("Do not know how to build DLLs for a non-Windows platform.");
+    }
+
+    build_angle(&target, egl);
+
+    #[cfg(feature = "egl")]
+    {
+        build_egl(&target);
+    }
+
+    #[cfg(feature = "egl")]
+    {
+        generate_bindings();
+    }
+
+    #[cfg(feature = "build_dlls")]
+    {
+        build_windows_dll(
+            &build_data::EGL,
+            "libEGL",
+            "gfx/angle/checkout/src/libEGL/libEGL.def",
+        );
+        build_windows_dll(
+            &build_data::GLESv2,
+            "libGLESv2",
+            "gfx/angle/checkout/src/libGLESv2/libGLESv2_autogen.def",
+        );
+    }
 }
 
-fn build_glesv2_dll(target: &str) {
+#[cfg(feature = "build_dlls")]
+fn build_windows_dll(
+    data: &build_data::Data,
+    dll_name: &str,
+    def_file: &str,
+) {
     let mut build = cc::Build::new();
-
-    let data = build_data::GLESv2;
     for &(k, v) in data.defines {
         build.define(k, v);
     }
-
-    for file in data.includes {
-        build.include(fixup_path(file));
-    }
-
-    for file in data.sources {
-        build.file(fixup_path(file));
-    }
-
-    if target.contains("x86_64") || target.contains("i686") {
-        build
-            .flag_if_supported("-msse2")  // GNU
-            .flag_if_supported("-arch:SSE2");  // MSVC
-    }
-    
+    build.define("ANGLE_USE_EGL_LOADER", None);
     build
         .flag_if_supported("/wd4100")
         .flag_if_supported("/wd4127")
         .flag_if_supported("/wd9002");
 
-    // Build DLL.
+    for file in data.includes {
+        build.include(fixup_path(file));
+    }
+
     let mut cmd = build.get_compiler().to_command();
-    let out = env::var("OUT_DIR").unwrap();
-    let out = Path::new(&out);
-    cmd.arg(out.join("angle.lib"));
+    let out_string = env::var("OUT_DIR").unwrap();
+    let out_path = Path::new(&out_string);
+
+    // Always include the base angle code.
+    cmd.arg(out_path.join("angle.lib"));
 
     for lib in data.os_libs {
         cmd.arg(&format!("{}.lib", lib));
@@ -55,29 +83,33 @@ fn build_glesv2_dll(target: &str) {
         cmd.arg(fixup_path(file));
     }
 
-    cmd.arg("/LD");
-    cmd.arg(&format!("/Fe{}", out.join("libGLESv2").display()));
+    // Enable multiprocessing for faster builds.
+    cmd.arg("/MP");
+    // Specify the creation of a DLL.
+    cmd.arg("/LD"); // Create a DLL.
+    // Specify the name of the DLL.
+    cmd.arg(format!("/Fe{}", out_path.join(dll_name).display()));
+    // Temporary obj files should go into the output directory. The slash
+    // at the end is required for multiple source inputs.
+    cmd.arg(format!("/Fo{}\\", out_path.display()));
+
+    // Specify the def file for the linker.
     cmd.arg("/link");
-    cmd.arg("/DEF:gfx/angle/checkout/src/libGLESv2/libGLESv2_autogen.def");
+    cmd.arg(format!("/DEF:{def_file}"));
+
     let status = cmd.status();
     assert!(status.unwrap().success());
 }
 
+#[cfg(feature = "egl")]
 fn build_egl(target: &str) {
-    if !target.contains("windows") {
-        return;
-    }
-
-    if cfg!(feature = "build_dlls") {
-        build_glesv2_dll(target);
-    }
-
     let mut build = cc::Build::new();
 
     let data = build_data::EGL;
     for &(k, v) in data.defines {
         build.define(k, v);
     }
+
     if cfg!(feature = "build_dlls") {
         build.define("ANGLE_USE_EGL_LOADER", None);
     }
@@ -101,39 +133,13 @@ fn build_egl(target: &str) {
         .flag_if_supported("/wd4127")
         .flag_if_supported("/wd9002");
 
-    if cfg!(feature = "build_dlls") {
-        // Build DLL.
-        let mut cmd = build.get_compiler().to_command();
-        let out = env::var("OUT_DIR").unwrap();
-        let out = Path::new(&out);
-        cmd.arg(out.join("angle.lib"));
-
-        for lib in data.os_libs {
-            cmd.arg(&format!("{}.lib", lib));
-        }
-
-        for file in data.sources {
-            cmd.arg(fixup_path(file));
-        }
-
-        cmd.arg("/LD");
-        cmd.arg(&format!("/Fe{}", out.join("libEGL").display()));
-        cmd.arg("/link");
-        cmd.arg("/DEF:gfx/angle/checkout/src/libEGL/libEGL.def");
-        let status = cmd.status();
-        assert!(status.unwrap().success());
-    }
-
     build.link_lib_modifier("-whole-archive");
 
     // Build lib.
     build.compile("EGL");
 }
 
-fn build_angle() {
-    let target = env::var("TARGET").unwrap();
-    let egl = env::var("CARGO_FEATURE_EGL").is_ok() && target.contains("windows");
-
+fn build_angle(target: &String, egl: bool) {
     let data = if egl { build_data::ANGLE } else { build_data::TRANSLATOR };
 
     let repo = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
@@ -193,10 +199,6 @@ fn build_angle() {
 
     build.compile("angle");
 
-    if egl {
-        build_egl(&target);
-    }
-
     for lib in data.os_libs {
         println!("cargo:rustc-link-lib={}", lib);
     }
@@ -212,9 +214,6 @@ fn fixup_path(path: &str) -> String {
     assert!(path.starts_with(prefix));
     format!("gfx/angle/{}", &path[prefix.len()..])
 }
-
-#[cfg(not(feature = "egl"))]
-fn generate_bindings() {}
 
 #[cfg(feature = "egl")]
 fn generate_bindings() {

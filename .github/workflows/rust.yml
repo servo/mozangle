@@ -24,7 +24,6 @@ jobs:
       if: ${{ !contains(matrix.os, 'windows') }}
       run: |
         cargo test --verbose
-        cargo test --verbose --features egl
 
   build_result:
     name: homu build finished
