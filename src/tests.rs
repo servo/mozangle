@@ -1,12 +1,11 @@
 use shaders::*;
-use std::sync::{ONCE_INIT, Once};
+use std::sync::{Once, ONCE_INIT};
 
 static GLSLANG_INITIALIZATION: Once = ONCE_INIT;
 
 fn init() {
     GLSLANG_INITIALIZATION.call_once(|| initialize().unwrap());
 }
-
 
 #[test]
 fn test_linkage() {
@@ -43,9 +42,7 @@ void main() {
 }
 ";
     let resources = BuiltInResources::default();
-    let compiler = ShaderValidator::for_webgl(FRAGMENT_SHADER,
-                                              Output::Glsl,
-                                              &resources).unwrap();
+    let compiler = ShaderValidator::for_webgl(FRAGMENT_SHADER, Output::Glsl, &resources).unwrap();
 
     assert!(compiler.compile_and_translate(&[source]).is_ok());
 
@@ -67,9 +64,7 @@ gl_FragColor = vec4(0, 1, 0, 1);  // green
     init();
 
     let resources = BuiltInResources::default();
-    let compiler = ShaderValidator::for_webgl(FRAGMENT_SHADER,
-                                              Output::Glsl,
-                                              &resources).unwrap();
+    let compiler = ShaderValidator::for_webgl(FRAGMENT_SHADER, Output::Glsl, &resources).unwrap();
 
     let result = compiler.compile_and_translate(&[SHADER]).unwrap();
     println!("{:?}", result);
@@ -91,9 +86,9 @@ gl_FragColor = vec4(0, 1, 0, 1);  // green
 
     init();
 
-    let compiler = ShaderValidator::for_webgl(FRAGMENT_SHADER,
-                                              Output::Essl,
-                                              &BuiltInResources::default()).expect("Failed to create a validator for essl");
+    let compiler =
+        ShaderValidator::for_webgl(FRAGMENT_SHADER, Output::Essl, &BuiltInResources::default())
+            .expect("Failed to create a validator for essl");
 
     let result = compiler.compile_and_translate(&[SHADER]).unwrap();
     println!("{:?}", result);
