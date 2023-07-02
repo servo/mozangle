@@ -18,6 +18,17 @@ def run():
         directory = path.join(ANGLE, "targets", lib)
         parse_lib(directory, data[lib])
         parse_lib(ANGLE, data[lib], ".common")
+
+    # Remove duplicate source files from libEGL and libGLESv2 since
+    # they are included in libANGLE and will be statically linked in.
+    def remove_duplicates_source_files(from_data: list[str]):
+        from_data['SOURCES'] = [
+            file for file in from_data['SOURCES']
+                if file not in data['libANGLE']['SOURCES']]
+
+    remove_duplicates_source_files(data['libEGL'])
+    remove_duplicates_source_files(data['libGLESv2'])
+
     with open(path.join(REPO, "build_data.rs"), "wb") as f:
         write(data, f)
 
