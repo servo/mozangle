@@ -7,13 +7,23 @@ pub mod ffi {
 
     include!("bindings.rs");
 
-    extern {
+    extern "C" {
         pub fn GLSLangInitialize() -> c_int;
         pub fn GLSLangFinalize() -> c_int;
         pub fn GLSLangInitBuiltInResources(res: *mut ShBuiltInResources);
-        pub fn GLSLangConstructCompiler(_type: c_uint, spec: c_int, output: c_int, resources_ptr: *const ShBuiltInResources) -> ShHandle;
+        pub fn GLSLangConstructCompiler(
+            _type: c_uint,
+            spec: c_int,
+            output: c_int,
+            resources_ptr: *const ShBuiltInResources,
+        ) -> ShHandle;
         pub fn GLSLangDestructCompiler(handle: ShHandle);
-        pub fn GLSLangCompile(handle: ShHandle, strings: *const *const c_char, num_strings: usize, compile_options: ShCompileOptions) -> c_int;
+        pub fn GLSLangCompile(
+            handle: ShHandle,
+            strings: *const *const c_char,
+            num_strings: usize,
+            compile_options: ShCompileOptions,
+        ) -> c_int;
         pub fn GLSLangClearResults(handle: ShHandle);
         pub fn GLSLangGetShaderVersion(handle: ShHandle) -> c_int;
         pub fn GLSLangGetShaderOutputType(handle: ShHandle) -> c_int;
@@ -21,34 +31,31 @@ pub mod ffi {
         pub fn GLSLangGetInfoLog(handle: ShHandle) -> *const c_char;
         pub fn GLSLangIterUniformNameMapping(
             handle: ShHandle,
-            each: unsafe extern fn(*mut c_void, *const c_char, usize, *const c_char, usize),
-            closure_each: *mut c_void
+            each: unsafe extern "C" fn(*mut c_void, *const c_char, usize, *const c_char, usize),
+            closure_each: *mut c_void,
         );
         pub fn GLSLangGetNumUnpackedVaryingVectors(handle: ShHandle) -> c_int;
     }
 }
 
-use self::ffi::*;
 use self::ffi::ShShaderOutput::*;
 use self::ffi::ShShaderSpec::*;
+use self::ffi::*;
 
 use std::collections::HashMap;
 use std::default;
 use std::ffi::CStr;
 use std::ffi::CString;
 use std::mem;
+use std::os::raw::c_char;
 use std::os::raw::c_void;
 use std::slice;
 use std::str;
 use std::sync::Mutex;
-use std::os::raw::c_char;
 
 lazy_static! {
-    static ref CONSTRUCT_COMPILER_LOCK: Mutex<()> = {
-        Mutex::new(())
-    };
+    static ref CONSTRUCT_COMPILER_LOCK: Mutex<()> = Mutex::new(());
 }
-
 
 pub fn initialize() -> Result<(), &'static str> {
     if unsafe { GLSLangInitialize() } == 0 {
@@ -149,7 +156,6 @@ impl BuiltInResources {
     }
 }
 
-
 pub struct ShaderValidator {
     handle: ShHandle,
 }
@@ -158,37 +164,46 @@ impl ShaderValidator {
     /// Create a new ShaderValidator instance
     /// NB: To call this you should have called first
     /// initialize()
-    pub fn new(shader_type: u32,
-               spec: ShaderSpec,
-               output: Output,
-               resources: &BuiltInResources) -> Option<ShaderValidator> {
+    pub fn new(
+        shader_type: u32,
+        spec: ShaderSpec,
+        output: Output,
+        resources: &BuiltInResources,
+    ) -> Option<ShaderValidator> {
         // GLSLangConstructCompiler is non-thread safe because it internally calls TCache::getType()
         // which writes/reads a std::map<T> with no locks.
         let _guard = CONSTRUCT_COMPILER_LOCK.lock().unwrap();
         let handle = unsafe {
-            GLSLangConstructCompiler(shader_type, spec.as_angle_enum(), output.as_angle_enum(), resources)
+            GLSLangConstructCompiler(
+                shader_type,
+                spec.as_angle_enum(),
+                output.as_angle_enum(),
+                resources,
+            )
         };
 
         if handle.is_null() {
             return None;
         }
 
-        Some(ShaderValidator {
-            handle: handle,
-        })
+        Some(ShaderValidator { handle: handle })
     }
 
     #[inline]
-    pub fn for_webgl(shader_type: u32,
-                     output: Output,
-                     resources: &BuiltInResources) -> Option<ShaderValidator> {
+    pub fn for_webgl(
+        shader_type: u32,
+        output: Output,
+        resources: &BuiltInResources,
+    ) -> Option<ShaderValidator> {
         Self::new(shader_type, ShaderSpec::WebGL, output, resources)
     }
 
     #[inline]
-    pub fn for_webgl2(shader_type: u32,
-                      output: Output,
-                      resources: &BuiltInResources) -> Option<ShaderValidator> {
+    pub fn for_webgl2(
+        shader_type: u32,
+        output: Output,
+        resources: &BuiltInResources,
+    ) -> Option<ShaderValidator> {
         Self::new(shader_type, ShaderSpec::WebGL2, output, resources)
     }
 
@@ -196,16 +211,21 @@ impl ShaderValidator {
         let mut cstrings = Vec::with_capacity(strings.len());
 
         for s in strings.iter() {
-            cstrings.push(try!(CString::new(*s).map_err(|_| "Found invalid characters")))
+            cstrings.push(CString::new(*s).map_err(|_| "Found invalid characters")?)
         }
 
         let cptrs: Vec<_> = cstrings.iter().map(|s| s.as_ptr()).collect();
 
-        if unsafe { GLSLangCompile(self.handle,
-                                   cptrs.as_ptr() as *const *const c_char,
-                                   cstrings.len(),
-                                   options) } == 0 {
-            return Err("Couldn't compile shader")
+        if unsafe {
+            GLSLangCompile(
+                self.handle,
+                cptrs.as_ptr() as *const *const c_char,
+                cstrings.len(),
+                options,
+            )
+        } == 0
+        {
+            return Err("Couldn't compile shader");
         }
         Ok(())
     }
@@ -240,7 +260,7 @@ impl ShaderValidator {
         // Right now SH_TIMING_RESTRICTIONS is experimental
         // and doesn't support user callable functions in shaders
 
-        try!(self.compile(strings, options));
+        self.compile(strings, options)?;
         Ok(self.object_code())
     }
 
@@ -252,12 +272,14 @@ impl ShaderValidator {
         struct Closure {
             map: HashMap<String, String>,
             error: Option<str::Utf8Error>,
-        };
+        }
 
-        unsafe extern fn each_c(
+        unsafe extern "C" fn each_c(
             closure: *mut c_void,
-            first: *const c_char, first_len: usize,
-            second: *const c_char, second_len: usize
+            first: *const c_char,
+            first_len: usize,
+            second: *const c_char,
+            second_len: usize,
         ) {
             // Safety: code in or called from this function must not panic.
             // If it might and https://github.com/rust-lang/rust/issues/18510 is not fixed yet,
@@ -271,12 +293,14 @@ impl ShaderValidator {
                             Ok(s) => s.to_owned(),
                             Err(e) => {
                                 closure.error = Some(e);
-                                return
+                                return;
                             }
                         }
-                    }
+                    };
                 }
-                closure.map.insert(to_string!(first, first_len), to_string!(second, second_len));
+                closure
+                    .map
+                    .insert(to_string!(first, first_len), to_string!(second, second_len));
             }
         }
 
@@ -285,9 +309,7 @@ impl ShaderValidator {
             error: None,
         };
         let closure_ptr: *mut Closure = &mut closure;
-        unsafe {
-            GLSLangIterUniformNameMapping(self.handle, each_c, closure_ptr as *mut c_void)
-        }
+        unsafe { GLSLangIterUniformNameMapping(self.handle, each_c, closure_ptr as *mut c_void) }
         if let Some(err) = closure.error {
             panic!("Non-UTF-8 uniform name in ANGLE shader: {}", err)
         }
@@ -295,16 +317,12 @@ impl ShaderValidator {
     }
 
     pub fn get_num_unpacked_varying_vectors(&self) -> i32 {
-        unsafe {
-            GLSLangGetNumUnpackedVaryingVectors(self.handle)
-        }
+        unsafe { GLSLangGetNumUnpackedVaryingVectors(self.handle) }
     }
 }
 
 impl Drop for ShaderValidator {
     fn drop(&mut self) {
-        unsafe {
-            GLSLangDestructCompiler(self.handle)
-        }
+        unsafe { GLSLangDestructCompiler(self.handle) }
     }
 }

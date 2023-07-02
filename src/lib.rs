@@ -1,8 +1,11 @@
-#[macro_use] extern crate lazy_static;
-#[cfg(test)] extern crate dlopen;
+#[macro_use]
+extern crate lazy_static;
+#[cfg(test)]
+extern crate dlopen;
 
 pub mod shaders;
-#[cfg(test)] mod tests;
+#[cfg(test)]
+mod tests;
 
 #[cfg(all(windows, feature = "egl"))]
 pub mod gles {
@@ -18,20 +21,21 @@ pub mod egl {
 
     pub fn get_proc_address(name: &str) -> *const c_void {
         let name = CString::new(name.as_bytes()).unwrap();
-        unsafe {
-            ffi::GetProcAddress(name.as_ptr()) as *const _ as _
-        }
+        unsafe { ffi::GetProcAddress(name.as_ptr()) as *const _ as _ }
     }
 
     pub mod ffi {
-        use std::os::raw::{c_void, c_long};
+        use std::os::raw::{c_long, c_void};
 
         include!(concat!(env!("OUT_DIR"), "/egl_bindings.rs"));
 
         // Adapted from https://github.com/tomaka/glutin/blob/1f3b8360cb/src/api/egl/ffi.rs
-        #[allow(non_camel_case_types)] pub type khronos_utime_nanoseconds_t = khronos_uint64_t;
-        #[allow(non_camel_case_types)] pub type khronos_uint64_t = u64;
-        #[allow(non_camel_case_types)] pub type khronos_ssize_t = c_long;
+        #[allow(non_camel_case_types)]
+        pub type khronos_utime_nanoseconds_t = khronos_uint64_t;
+        #[allow(non_camel_case_types)]
+        pub type khronos_uint64_t = u64;
+        #[allow(non_camel_case_types)]
+        pub type khronos_ssize_t = c_long;
         pub type EGLint = i32;
         pub type EGLNativeDisplayType = *const c_void;
         pub type EGLNativePixmapType = *const c_void;
