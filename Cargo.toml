@@ -2,8 +2,8 @@
 name = "mozangle"
 version = "0.3.6"
 authors = ["The ANGLE Project Authors", "The Servo Project Developers"]
-license = " BSD-3-Clause"
-description = "Mozilla’s fork of Google ANGLE, repackaged as a Rust crate "
+license = "BSD-3-Clause"
+description = "Mozilla's fork of Google ANGLE, repackaged as a Rust crate."
 repository = "https://github.com/servo/mozangle"
 readme = "README.md"
 
