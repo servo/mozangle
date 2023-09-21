@@ -1,6 +1,6 @@
 [package]
 name = "mozangle"
-version = "0.3.5"
+version = "0.3.6"
 authors = ["The ANGLE Project Authors", "The Servo Project Developers"]
 license = " BSD-3-Clause"
 description = "Mozilla’s fork of Google ANGLE, repackaged as a Rust crate "
@@ -15,7 +15,7 @@ dlopen = "0.1"
 
 [build-dependencies]
 cc = { version = "1.0.74", features = ["parallel"] }
-gl_generator = { version = "0.13.1", optional = true }
+gl_generator = { version = "0.14", optional = true }
 walkdir = "2"
 
 [features]
