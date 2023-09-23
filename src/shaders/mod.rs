@@ -3,39 +3,7 @@
 #[allow(non_camel_case_types)]
 #[allow(non_snake_case)]
 pub mod ffi {
-    use std::os::raw::{c_char, c_int, c_uint, c_void};
-
-    include!("bindings.rs");
-
-    extern "C" {
-        pub fn GLSLangInitialize() -> c_int;
-        pub fn GLSLangFinalize() -> c_int;
-        pub fn GLSLangInitBuiltInResources(res: *mut ShBuiltInResources);
-        pub fn GLSLangConstructCompiler(
-            _type: c_uint,
-            spec: c_int,
-            output: c_int,
-            resources_ptr: *const ShBuiltInResources,
-        ) -> ShHandle;
-        pub fn GLSLangDestructCompiler(handle: ShHandle);
-        pub fn GLSLangCompile(
-            handle: ShHandle,
-            strings: *const *const c_char,
-            num_strings: usize,
-            compile_options: ShCompileOptions,
-        ) -> c_int;
-        pub fn GLSLangClearResults(handle: ShHandle);
-        pub fn GLSLangGetShaderVersion(handle: ShHandle) -> c_int;
-        pub fn GLSLangGetShaderOutputType(handle: ShHandle) -> c_int;
-        pub fn GLSLangGetObjectCode(handle: ShHandle) -> *const c_char;
-        pub fn GLSLangGetInfoLog(handle: ShHandle) -> *const c_char;
-        pub fn GLSLangIterUniformNameMapping(
-            handle: ShHandle,
-            each: unsafe extern "C" fn(*mut c_void, *const c_char, usize, *const c_char, usize),
-            closure_each: *mut c_void,
-        );
-        pub fn GLSLangGetNumUnpackedVaryingVectors(handle: ShHandle) -> c_int;
-    }
+    include!(concat!(env!("OUT_DIR"), "/angle_bindings.rs"));
 }
 
 use self::ffi::ShShaderOutput::*;
@@ -46,7 +14,7 @@ use std::collections::HashMap;
 use std::default;
 use std::ffi::CStr;
 use std::ffi::CString;
-use std::mem;
+use std::mem::{self, MaybeUninit};
 use std::os::raw::c_char;
 use std::os::raw::c_void;
 use std::slice;
@@ -142,7 +110,7 @@ pub type BuiltInResources = ShBuiltInResources;
 impl default::Default for BuiltInResources {
     fn default() -> BuiltInResources {
         unsafe {
-            let mut ret: BuiltInResources = mem::zeroed();
+            let mut ret: BuiltInResources = Self::empty();
             GLSLangInitBuiltInResources(&mut ret);
             ret
         }
@@ -152,7 +120,7 @@ impl default::Default for BuiltInResources {
 impl BuiltInResources {
     #[inline]
     pub fn empty() -> BuiltInResources {
-        unsafe { mem::zeroed() }
+        unsafe { MaybeUninit::zeroed().assume_init() }
     }
 }
 
@@ -309,7 +277,7 @@ impl ShaderValidator {
             error: None,
         };
         let closure_ptr: *mut Closure = &mut closure;
-        unsafe { GLSLangIterUniformNameMapping(self.handle, each_c, closure_ptr as *mut c_void) }
+        unsafe { GLSLangIterUniformNameMapping(self.handle, Some(each_c), closure_ptr as *mut c_void) }
         if let Some(err) = closure.error {
             panic!("Non-UTF-8 uniform name in ANGLE shader: {}", err)
         }

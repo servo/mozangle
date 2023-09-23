@@ -5,10 +5,14 @@ extern crate cc;
 extern crate gl_generator;
 extern crate walkdir;
 
+extern crate bindgen;
+
 use std::env;
 #[cfg(feature = "egl")]
 use std::path::Path;
 use std::path::PathBuf;
+
+use bindgen::Formatter;
 
 mod build_data;
 
@@ -148,16 +152,24 @@ fn build_angle(target: &String, egl: bool) {
     let repo = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
     env::set_current_dir(repo).unwrap();
 
-    // Change to one of the directory that contains moz.build
-    let mut build = cc::Build::new();
+    // common clang args
+    let mut clang_args = vec![String::from("-std=c++14")];
 
     for &(k, v) in data.defines {
-        build.define(k, v);
+        if let Some(v) = v {
+            clang_args.push(format!("-D{}={}", k, v));
+        } else {
+            clang_args.push(format!("-D{}", k));
+        }
     }
 
     for file in data.includes {
-        build.include(fixup_path(file));
+        clang_args.push(String::from("-I"));
+        clang_args.push(fixup_path(file));
     }
+
+    // Change to one of the directory that contains moz.build
+    let mut build = cc::Build::new();
 
     for file in data.sources {
         build.file(fixup_path(file));
@@ -192,11 +204,14 @@ fn build_angle(target: &String, egl: bool) {
         }
     }
 
+    for flag in &clang_args {
+        build.flag(flag);
+    }
+
     build
         .file("src/shaders/glslang-c.cpp")
         .cpp(true)
         .warnings(false)
-        .flag_if_supported("-std=c++14")
         .flag_if_supported("/wd4100")
         .flag_if_supported("/wd4127")
         .flag_if_supported("/wd9002");
@@ -211,6 +226,37 @@ fn build_angle(target: &String, egl: bool) {
 
     build.compile("angle");
 
+    // now generate bindings
+    let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
+    let mut builder = bindgen::builder()
+        .rust_target(bindgen::RustTarget::Stable_1_59)
+        .header("./src/shaders/glslang-c.cpp")
+        .opaque_type("std.*")
+        .allowlist_type("Sh.*")
+        .allowlist_var("SH.*")
+        .rustified_enum("Sh.*")
+        .formatter(Formatter::Rustfmt)
+        .clang_args(["-I", "gfx/angle/checkout/include"])
+        .clang_args(clang_args)
+        // ensure cxx
+        .clang_arg("-x")
+        .clang_arg("c++");
+
+    if target.contains("x86_64") || target.contains("i686") {
+        builder = builder.clang_arg("-msse2")
+    }
+
+    for func in ALLOWLIST_FN {
+        builder = builder.allowlist_function(func)
+    }
+
+    builder
+        .generate()
+        .expect("Should generate shader bindings")
+        .write_to_file(out_dir.join("angle_bindings.rs"))
+        .expect("Should write bindings to file");
+
+
     for lib in data.os_libs {
         println!("cargo:rustc-link-lib={}", lib);
     }
@@ -223,6 +269,22 @@ fn build_angle(target: &String, egl: bool) {
         );
     }
 }
+
+const ALLOWLIST_FN: &'static [&'static str] = &[
+    "GLSLangInitialize",
+    "GLSLangFinalize",
+    "GLSLangInitBuiltInResources",
+    "GLSLangConstructCompiler",
+    "GLSLangDestructCompiler",
+    "GLSLangCompile",
+    "GLSLangClearResults",
+    "GLSLangGetShaderVersion",
+    "GLSLangGetShaderOutputType",
+    "GLSLangGetObjectCode",
+    "GLSLangGetInfoLog",
+    "GLSLangIterUniformNameMapping",
+    "GLSLangGetNumUnpackedVaryingVectors",
+];
 
 fn fixup_path(path: &str) -> String {
     let prefix = "../../";
