@@ -1,0 +1,7 @@
+[target.aarch64-unknown-linux-gnu]
+image = "ghcr.io/servo/cross-aarch64-unknown-linux-gnu:main"
+pre-build = ["apt update", "apt install -y libx11-dev"]
+
+[target.armv7-unknown-linux-gnueabihf]
+image = "ghcr.io/servo/cross-armv7-unknown-linux-gnueabihf:main"
+pre-build = ["apt update", "apt install -y libx11-dev"]

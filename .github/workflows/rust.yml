@@ -33,6 +33,25 @@ jobs:
         run: |
           cargo test --verbose
 
+  linux-cross-compile:
+    name: linux (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - aarch64-unknown-linux-gnu
+          - armv7-unknown-linux-gnueabihf
+    container: ghcr.io/servo/cross-${{ matrix.target }}:main
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: apt update && apt install -y libx11-dev
+      - run: cargo test --target ${{ matrix.target }}
+
   build_result:
     name: homu build finished
     runs-on: ubuntu-latest
