@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2015 The ANGLE Project Authors. All rights reserved.
+// Copyright 2015 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -94,6 +94,20 @@ void TExtensionGLSL::checkOperator(TIntermOperator *node)
             {
                 mEnabledExtensions.insert("GL_ARB_shading_language_packing");
             }
+            break;
+
+        case EOpBeginInvocationInterlockNV:
+        case EOpEndInvocationInterlockNV:
+            mRequiredExtensions.insert("GL_NV_fragment_shader_interlock");
+            break;
+
+        case EOpBeginFragmentShaderOrderingINTEL:
+            mRequiredExtensions.insert("GL_INTEL_fragment_shader_ordering");
+            break;
+
+        case EOpBeginInvocationInterlockARB:
+        case EOpEndInvocationInterlockARB:
+            mRequiredExtensions.insert("GL_ARB_fragment_shader_interlock");
             break;
 
         default:

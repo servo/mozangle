@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2012 The ANGLE Project Authors. All rights reserved.
+// Copyright 2012 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -7,11 +7,15 @@
 // Query.cpp: Implements the gl::Query class
 
 #include "libANGLE/Query.h"
+
+#include "libANGLE/renderer/GLImplFactory.h"
 #include "libANGLE/renderer/QueryImpl.h"
 
 namespace gl
 {
-Query::Query(rx::QueryImpl *impl, GLuint id) : RefCountObject(id), mQuery(impl), mLabel() {}
+Query::Query(rx::GLImplFactory *factory, QueryType type, QueryID id)
+    : RefCountObject(factory->generateSerial(), id), mQuery(factory->createQuery(type)), mLabel()
+{}
 
 Query::~Query()
 {
@@ -24,9 +28,15 @@ void Query::onDestroy(const Context *context)
     mQuery->onDestroy(context);
 }
 
-void Query::setLabel(const Context *context, const std::string &label)
+angle::Result Query::setLabel(const Context *context, const std::string &label)
 {
     mLabel = label;
+
+    if (mQuery)
+    {
+        return mQuery->onLabelUpdate(context);
+    }
+    return angle::Result::Continue;
 }
 
 const std::string &Query::getLabel() const
@@ -79,12 +89,7 @@ QueryType Query::getType() const
     return mQuery->getType();
 }
 
-rx::QueryImpl *Query::getImplementation()
-{
-    return mQuery;
-}
-
-const rx::QueryImpl *Query::getImplementation() const
+rx::QueryImpl *Query::getImplementation() const
 {
     return mQuery;
 }

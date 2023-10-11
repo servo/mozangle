@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2002-2011 The ANGLE Project Authors. All rights reserved.
+// Copyright 2002 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -39,8 +39,6 @@ class HandleAllocator final : angle::NonCopyable
   private:
     GLuint mBaseValue;
     GLuint mNextValue;
-    typedef std::vector<GLuint> HandleList;
-    HandleList mFreeValues;
 
     // Represents an inclusive range [begin, end]
     struct HandleRange

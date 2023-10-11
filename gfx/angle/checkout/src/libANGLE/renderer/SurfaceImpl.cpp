@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2002-2014 The ANGLE Project Authors. All rights reserved.
+// Copyright 2002 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -15,7 +15,24 @@ SurfaceImpl::SurfaceImpl(const egl::SurfaceState &state) : mState(state) {}
 
 SurfaceImpl::~SurfaceImpl() {}
 
-egl::Error SurfaceImpl::swapWithDamage(const gl::Context *context, EGLint *rects, EGLint n_rects)
+egl::Error SurfaceImpl::makeCurrent(const gl::Context *context)
+{
+    return egl::NoError();
+}
+
+egl::Error SurfaceImpl::unMakeCurrent(const gl::Context *context)
+{
+    return egl::NoError();
+}
+
+egl::Error SurfaceImpl::prepareSwap(const gl::Context *)
+{
+    return angle::ResultToEGL(angle::Result::Continue);
+}
+
+egl::Error SurfaceImpl::swapWithDamage(const gl::Context *context,
+                                       const EGLint *rects,
+                                       EGLint n_rects)
 {
     UNREACHABLE();
     return egl::EglBadSurface() << "swapWithDamage implementation missing.";
@@ -83,4 +100,59 @@ egl::Error SurfaceImpl::getFrameTimestamps(EGLuint64KHR frameId,
     return egl::EglBadDisplay();
 }
 
+egl::Error SurfaceImpl::swapWithFrameToken(const gl::Context *context,
+                                           EGLFrameTokenANGLE frameToken)
+{
+    UNREACHABLE();
+    return egl::EglBadDisplay();
+}
+
+egl::Error SurfaceImpl::getUserWidth(const egl::Display *display, EGLint *value) const
+{
+    *value = getWidth();
+    return egl::NoError();
+}
+
+egl::Error SurfaceImpl::getUserHeight(const egl::Display *display, EGLint *value) const
+{
+    *value = getHeight();
+    return egl::NoError();
+}
+
+egl::Error SurfaceImpl::getBufferAge(const gl::Context *context, EGLint *age)
+{
+    *age = 0;
+    return egl::NoError();
+}
+
+egl::Error SurfaceImpl::setAutoRefreshEnabled(bool enabled)
+{
+    return egl::EglBadMatch();
+}
+
+egl::Error SurfaceImpl::lockSurface(const egl::Display *display,
+                                    EGLint usageHint,
+                                    bool preservePixels,
+                                    uint8_t **bufferPtrOut,
+                                    EGLint *bufferPitchOut)
+{
+    UNREACHABLE();
+    return egl::EglBadMatch();
+}
+
+egl::Error SurfaceImpl::unlockSurface(const egl::Display *display, bool preservePixels)
+{
+    UNREACHABLE();
+    return egl::EglBadMatch();
+}
+
+EGLint SurfaceImpl::origin() const
+{
+    return EGL_LOWER_LEFT_KHR;
+}
+
+egl::Error SurfaceImpl::setRenderBuffer(EGLint renderBuffer)
+{
+    return egl::NoError();
+}
 }  // namespace rx

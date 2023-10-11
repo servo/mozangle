@@ -8,30 +8,32 @@
 
 #include "libANGLE/LoggingAnnotator.h"
 
-#include <platform/Platform.h>
-#include "third_party/trace_event/trace_event.h"
+#include "libANGLE/trace.h"
 
 namespace angle
 {
 
-bool LoggingAnnotator::getStatus()
+bool LoggingAnnotator::getStatus(const gl::Context *context)
 {
     return false;
 }
 
-void LoggingAnnotator::beginEvent(const char *eventName, const char *eventMessage)
+void LoggingAnnotator::beginEvent(gl::Context *context,
+                                  EntryPoint entryPoint,
+                                  const char *eventName,
+                                  const char *eventMessage)
 {
-    TRACE_EVENT_BEGIN0("gpu.angle", eventName);
+    ANGLE_TRACE_EVENT_BEGIN0("gpu.angle", eventName);
 }
 
-void LoggingAnnotator::endEvent(const char *eventName)
+void LoggingAnnotator::endEvent(gl::Context *context, const char *eventName, EntryPoint entryPoint)
 {
-    TRACE_EVENT_END0("gpu.angle", eventName);
+    ANGLE_TRACE_EVENT_END0("gpu.angle", eventName);
 }
 
-void LoggingAnnotator::setMarker(const char *markerName)
+void LoggingAnnotator::setMarker(gl::Context *context, const char *markerName)
 {
-    TRACE_EVENT_INSTANT0("gpu.angle", markerName);
+    ANGLE_TRACE_EVENT_INSTANT0("gpu.angle", markerName);
 }
 
 void LoggingAnnotator::logMessage(const gl::LogMessage &msg) const
@@ -41,20 +43,21 @@ void LoggingAnnotator::logMessage(const gl::LogMessage &msg) const
     {
         switch (msg.getSeverity())
         {
+            case gl::LOG_FATAL:
             case gl::LOG_ERR:
                 plat->logError(plat, msg.getMessage().c_str());
                 break;
             case gl::LOG_WARN:
                 plat->logWarning(plat, msg.getMessage().c_str());
                 break;
+            case gl::LOG_INFO:
+                plat->logInfo(plat, msg.getMessage().c_str());
+                break;
             default:
                 UNREACHABLE();
         }
     }
-    else
-    {
-        gl::Trace(msg.getSeverity(), msg.getMessage().c_str());
-    }
+    gl::Trace(msg.getSeverity(), msg.getMessage().c_str());
 }
 
 }  // namespace angle

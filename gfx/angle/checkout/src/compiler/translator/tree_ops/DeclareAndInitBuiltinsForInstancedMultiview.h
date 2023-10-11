@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2017 The ANGLE Project Authors. All rights reserved.
+// Copyright 2017 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -13,7 +13,7 @@
 // its qualifier to EvqTemporary.
 // - Add initializers of ViewID_OVR and InstanceID to the beginning of the body of main. The pass
 // should be executed before any variables get collected so that usage of gl_InstanceID is recorded.
-// - If the output is ESSL or GLSL and the SH_SELECT_VIEW_IN_NV_GLSL_VERTEX_SHADER option is
+// - If the output is ESSL or GLSL and the selectViewInNvGLSLVertexShader option is
 // enabled, the expression
 // "if (multiviewBaseViewLayerIndex < 0) {
 //      gl_ViewportIndex = int(ViewID_OVR);
@@ -29,19 +29,23 @@
 
 #include "GLSLANG/ShaderLang.h"
 #include "angle_gl.h"
+#include "common/angleutils.h"
 
 namespace sh
 {
 
+class TCompiler;
 class TIntermBlock;
 class TSymbolTable;
 
-void DeclareAndInitBuiltinsForInstancedMultiview(TIntermBlock *root,
-                                                 unsigned numberOfViews,
-                                                 GLenum shaderType,
-                                                 ShCompileOptions compileOptions,
-                                                 ShShaderOutput shaderOutput,
-                                                 TSymbolTable *symbolTable);
+[[nodiscard]] bool DeclareAndInitBuiltinsForInstancedMultiview(
+    TCompiler *compiler,
+    TIntermBlock *root,
+    unsigned numberOfViews,
+    GLenum shaderType,
+    const ShCompileOptions &compileOptions,
+    ShShaderOutput shaderOutput,
+    TSymbolTable *symbolTable);
 
 }  // namespace sh
 

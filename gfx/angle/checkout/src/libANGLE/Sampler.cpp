@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2013 The ANGLE Project Authors. All rights reserved.
+// Copyright 2013 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -15,20 +15,36 @@
 namespace gl
 {
 
-Sampler::Sampler(rx::GLImplFactory *factory, GLuint id)
-    : RefCountObject(id), mState(), mImpl(factory->createSampler(mState)), mLabel()
+Sampler::Sampler(rx::GLImplFactory *factory, SamplerID id)
+    : RefCountObject(factory->generateSerial(), id),
+      mState(),
+      mDirty(true),
+      mSampler(factory->createSampler(mState)),
+      mLabel()
 {}
 
 Sampler::~Sampler()
 {
-    SafeDelete(mImpl);
+    SafeDelete(mSampler);
 }
 
-void Sampler::onDestroy(const Context *context) {}
+void Sampler::onDestroy(const Context *context)
+{
+    if (mSampler)
+    {
+        mSampler->onDestroy(context);
+    }
+}
 
-void Sampler::setLabel(const Context *context, const std::string &label)
+angle::Result Sampler::setLabel(const Context *context, const std::string &label)
 {
     mLabel = label;
+
+    if (mSampler)
+    {
+        return mSampler->onLabelUpdate(context);
+    }
+    return angle::Result::Continue;
 }
 
 const std::string &Sampler::getLabel() const
@@ -36,9 +52,10 @@ const std::string &Sampler::getLabel() const
     return mLabel;
 }
 
-void Sampler::setMinFilter(GLenum minFilter)
+void Sampler::setMinFilter(const Context *context, GLenum minFilter)
 {
     mState.setMinFilter(minFilter);
+    signalDirtyState();
 }
 
 GLenum Sampler::getMinFilter() const
@@ -46,9 +63,10 @@ GLenum Sampler::getMinFilter() const
     return mState.getMinFilter();
 }
 
-void Sampler::setMagFilter(GLenum magFilter)
+void Sampler::setMagFilter(const Context *context, GLenum magFilter)
 {
     mState.setMagFilter(magFilter);
+    signalDirtyState();
 }
 
 GLenum Sampler::getMagFilter() const
@@ -56,9 +74,10 @@ GLenum Sampler::getMagFilter() const
     return mState.getMagFilter();
 }
 
-void Sampler::setWrapS(GLenum wrapS)
+void Sampler::setWrapS(const Context *context, GLenum wrapS)
 {
     mState.setWrapS(wrapS);
+    signalDirtyState();
 }
 
 GLenum Sampler::getWrapS() const
@@ -66,9 +85,10 @@ GLenum Sampler::getWrapS() const
     return mState.getWrapS();
 }
 
-void Sampler::setWrapT(GLenum wrapT)
+void Sampler::setWrapT(const Context *context, GLenum wrapT)
 {
     mState.setWrapT(wrapT);
+    signalDirtyState();
 }
 
 GLenum Sampler::getWrapT() const
@@ -76,9 +96,10 @@ GLenum Sampler::getWrapT() const
     return mState.getWrapT();
 }
 
-void Sampler::setWrapR(GLenum wrapR)
+void Sampler::setWrapR(const Context *context, GLenum wrapR)
 {
     mState.setWrapR(wrapR);
+    signalDirtyState();
 }
 
 GLenum Sampler::getWrapR() const
@@ -86,9 +107,10 @@ GLenum Sampler::getWrapR() const
     return mState.getWrapR();
 }
 
-void Sampler::setMaxAnisotropy(float maxAnisotropy)
+void Sampler::setMaxAnisotropy(const Context *context, float maxAnisotropy)
 {
     mState.setMaxAnisotropy(maxAnisotropy);
+    signalDirtyState();
 }
 
 float Sampler::getMaxAnisotropy() const
@@ -96,9 +118,10 @@ float Sampler::getMaxAnisotropy() const
     return mState.getMaxAnisotropy();
 }
 
-void Sampler::setMinLod(GLfloat minLod)
+void Sampler::setMinLod(const Context *context, GLfloat minLod)
 {
     mState.setMinLod(minLod);
+    signalDirtyState();
 }
 
 GLfloat Sampler::getMinLod() const
@@ -106,9 +129,10 @@ GLfloat Sampler::getMinLod() const
     return mState.getMinLod();
 }
 
-void Sampler::setMaxLod(GLfloat maxLod)
+void Sampler::setMaxLod(const Context *context, GLfloat maxLod)
 {
     mState.setMaxLod(maxLod);
+    signalDirtyState();
 }
 
 GLfloat Sampler::getMaxLod() const
@@ -116,9 +140,10 @@ GLfloat Sampler::getMaxLod() const
     return mState.getMaxLod();
 }
 
-void Sampler::setCompareMode(GLenum compareMode)
+void Sampler::setCompareMode(const Context *context, GLenum compareMode)
 {
     mState.setCompareMode(compareMode);
+    signalDirtyState();
 }
 
 GLenum Sampler::getCompareMode() const
@@ -126,9 +151,10 @@ GLenum Sampler::getCompareMode() const
     return mState.getCompareMode();
 }
 
-void Sampler::setCompareFunc(GLenum compareFunc)
+void Sampler::setCompareFunc(const Context *context, GLenum compareFunc)
 {
     mState.setCompareFunc(compareFunc);
+    signalDirtyState();
 }
 
 GLenum Sampler::getCompareFunc() const
@@ -136,9 +162,10 @@ GLenum Sampler::getCompareFunc() const
     return mState.getCompareFunc();
 }
 
-void Sampler::setSRGBDecode(GLenum sRGBDecode)
+void Sampler::setSRGBDecode(const Context *context, GLenum sRGBDecode)
 {
     mState.setSRGBDecode(sRGBDecode);
+    signalDirtyState();
 }
 
 GLenum Sampler::getSRGBDecode() const
@@ -146,9 +173,10 @@ GLenum Sampler::getSRGBDecode() const
     return mState.getSRGBDecode();
 }
 
-void Sampler::setBorderColor(const ColorGeneric &color)
+void Sampler::setBorderColor(const Context *context, const ColorGeneric &color)
 {
     mState.setBorderColor(color);
+    signalDirtyState();
 }
 
 const ColorGeneric &Sampler::getBorderColor() const
@@ -163,13 +191,21 @@ const SamplerState &Sampler::getSamplerState() const
 
 rx::SamplerImpl *Sampler::getImplementation() const
 {
-    return mImpl;
+    return mSampler;
 }
 
-void Sampler::syncState(const Context *context)
+angle::Result Sampler::syncState(const Context *context)
 {
-    // TODO(jmadill): Use actual dirty bits for sampler.
-    mImpl->syncState(context);
+    ASSERT(isDirty());
+    angle::Result result = mSampler->syncState(context, mDirty);
+    mDirty               = result != angle::Result::Continue;
+    return result;
+}
+
+void Sampler::signalDirtyState()
+{
+    mDirty = true;
+    onStateChange(angle::SubjectMessage::DirtyBitsFlagged);
 }
 
 }  // namespace gl

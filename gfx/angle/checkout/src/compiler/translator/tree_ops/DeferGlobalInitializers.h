@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2016 The ANGLE Project Authors. All rights reserved.
+// Copyright 2016 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -16,17 +16,22 @@
 #ifndef COMPILER_TRANSLATOR_TREEOPS_DEFERGLOBALINITIALIZERS_H_
 #define COMPILER_TRANSLATOR_TREEOPS_DEFERGLOBALINITIALIZERS_H_
 
+#include "common/angleutils.h"
+
 namespace sh
 {
 
+class TCompiler;
 class TIntermBlock;
 class TSymbolTable;
 
-void DeferGlobalInitializers(TIntermBlock *root,
-                             bool initializeUninitializedGlobals,
-                             bool canUseLoopsToInitialize,
-                             bool highPrecisionSupported,
-                             TSymbolTable *symbolTable);
+[[nodiscard]] bool DeferGlobalInitializers(TCompiler *compiler,
+                                           TIntermBlock *root,
+                                           bool initializeUninitializedGlobals,
+                                           bool canUseLoopsToInitialize,
+                                           bool highPrecisionSupported,
+                                           bool forceDeferGlobalInitializers,
+                                           TSymbolTable *symbolTable);
 
 }  // namespace sh
 

@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2013 The ANGLE Project Authors. All rights reserved.
+// Copyright 2013 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -37,9 +37,11 @@ class QueryImpl : angle::NonCopyable
     virtual angle::Result getResult(const gl::Context *context, GLuint64 *params)        = 0;
     virtual angle::Result isResultAvailable(const gl::Context *context, bool *available) = 0;
 
+    virtual angle::Result onLabelUpdate(const gl::Context *context);
+
     gl::QueryType getType() const { return mType; }
 
-  private:
+  protected:
     gl::QueryType mType;
 };
 }  // namespace rx

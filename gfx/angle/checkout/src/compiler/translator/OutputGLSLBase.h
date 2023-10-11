@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2002-2013 The ANGLE Project Authors. All rights reserved.
+// Copyright 2002 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -9,25 +9,22 @@
 
 #include <set>
 
+#include "compiler/translator/ExtensionBehavior.h"
 #include "compiler/translator/HashNames.h"
 #include "compiler/translator/InfoSink.h"
+#include "compiler/translator/Pragma.h"
 #include "compiler/translator/tree_util/IntermTraverse.h"
 
 namespace sh
 {
+class TCompiler;
 
 class TOutputGLSLBase : public TIntermTraverser
 {
   public:
-    TOutputGLSLBase(TInfoSinkBase &objSink,
-                    ShArrayIndexClampingStrategy clampingStrategy,
-                    ShHashFunction64 hashFunction,
-                    NameMap &nameMap,
-                    TSymbolTable *symbolTable,
-                    sh::GLenum shaderType,
-                    int shaderVersion,
-                    ShShaderOutput output,
-                    ShCompileOptions compileOptions);
+    TOutputGLSLBase(TCompiler *compiler,
+                    TInfoSinkBase &objSink,
+                    const ShCompileOptions &compileOptions);
 
     ShShaderOutput getShaderOutput() const { return mOutput; }
 
@@ -40,9 +37,15 @@ class TOutputGLSLBase : public TIntermTraverser
     TInfoSinkBase &objSink() { return mObjSink; }
     void writeFloat(TInfoSinkBase &out, float f);
     void writeTriplet(Visit visit, const char *preStr, const char *inStr, const char *postStr);
-    virtual void writeLayoutQualifier(TIntermTyped *variable);
+    std::string getCommonLayoutQualifiers(TIntermSymbol *variable);
+    std::string getMemoryQualifiers(const TType &type);
+    virtual void writeLayoutQualifier(TIntermSymbol *variable);
+    void writeFieldLayoutQualifier(const TField *field);
     void writeInvariantQualifier(const TType &type);
-    virtual void writeVariableType(const TType &type, const TSymbol *symbol);
+    void writePreciseQualifier(const TType &type);
+    virtual void writeVariableType(const TType &type,
+                                   const TSymbol *symbol,
+                                   bool isFunctionArgument);
     virtual bool writeVariablePrecision(TPrecision precision) = 0;
     void writeFunctionParameters(const TFunction *func);
     const TConstantUnion *writeConstantUnion(const TType &type, const TConstantUnion *pConstUnion);
@@ -62,7 +65,8 @@ class TOutputGLSLBase : public TIntermTraverser
     bool visitFunctionDefinition(Visit visit, TIntermFunctionDefinition *node) override;
     bool visitAggregate(Visit visit, TIntermAggregate *node) override;
     bool visitBlock(Visit visit, TIntermBlock *node) override;
-    bool visitInvariantDeclaration(Visit visit, TIntermInvariantDeclaration *node) override;
+    bool visitGlobalQualifierDeclaration(Visit visit,
+                                         TIntermGlobalQualifierDeclaration *node) override;
     bool visitDeclaration(Visit visit, TIntermDeclaration *node) override;
     bool visitLoop(Visit visit, TIntermLoop *node) override;
     bool visitBranch(Visit visit, TIntermBranch *node) override;
@@ -74,41 +78,54 @@ class TOutputGLSLBase : public TIntermTraverser
     // Same as hashName(), but without hashing "main".
     ImmutableString hashFunctionNameIfNeeded(const TFunction *func);
     // Used to translate function names for differences between ESSL and GLSL
-    virtual ImmutableString translateTextureFunction(const ImmutableString &name) { return name; }
+    virtual ImmutableString translateTextureFunction(const ImmutableString &name,
+                                                     const ShCompileOptions &option)
+    {
+        return name;
+    }
 
     void declareStruct(const TStructure *structure);
-    virtual void writeQualifier(TQualifier qualifier, const TSymbol *symbol);
-    bool structDeclared(const TStructure *structure) const;
-
-  private:
-    void declareInterfaceBlockLayout(const TInterfaceBlock *interfaceBlock);
-    void declareInterfaceBlock(const TInterfaceBlock *interfaceBlock);
-
-    void writeBuiltInFunctionTriplet(Visit visit, TOperator op, bool useEmulatedFunction);
+    void writeQualifier(TQualifier qualifier, const TType &type, const TSymbol *symbol);
 
     const char *mapQualifierToString(TQualifier qualifier);
+
+    sh::GLenum getShaderType() const { return mShaderType; }
+    bool isHighPrecisionSupported() const { return mHighPrecisionSupported; }
+    const char *getIndentPrefix(int extraIndentDepth = 0);
+
+    bool needsToWriteLayoutQualifier(const TType &type);
+
+  private:
+    void declareInterfaceBlockLayout(const TType &type);
+    void declareInterfaceBlock(const TType &type);
+
+    void writeFunctionTriplet(Visit visit,
+                              const ImmutableString &functionName,
+                              bool useEmulatedFunction);
 
     TInfoSinkBase &mObjSink;
     bool mDeclaringVariable;
 
-    // This set contains all the ids of the structs from every scope.
-    std::set<int> mDeclaredStructs;
-
-    ShArrayIndexClampingStrategy mClampingStrategy;
-
     // name hashing.
     ShHashFunction64 mHashFunction;
-
     NameMap &mNameMap;
 
     sh::GLenum mShaderType;
-
     const int mShaderVersion;
-
     ShShaderOutput mOutput;
 
-    ShCompileOptions mCompileOptions;
+    bool mHighPrecisionSupported;
+
+    // Emit "layout(locaton = 0)" for fragment outputs whose location is unspecified. This is for
+    // transformations like pixel local storage, where new outputs are introduced to the shader, and
+    // previously valid fragment outputs with an implicit location of 0 are now required to specify
+    // their location.
+    bool mAlwaysSpecifyFragOutLocation;
+
+    const ShCompileOptions &mCompileOptions;
 };
+
+void WritePragma(TInfoSinkBase &out, const ShCompileOptions &compileOptions, const TPragma &pragma);
 
 void WriteGeometryShaderLayoutQualifiers(TInfoSinkBase &out,
                                          sh::TLayoutPrimitiveType inputPrimitive,
@@ -116,7 +133,21 @@ void WriteGeometryShaderLayoutQualifiers(TInfoSinkBase &out,
                                          sh::TLayoutPrimitiveType outputPrimitive,
                                          int maxVertices);
 
-bool NeedsToWriteLayoutQualifier(const TType &type);
+void WriteTessControlShaderLayoutQualifiers(TInfoSinkBase &out, int inputVertices);
+
+void WriteTessEvaluationShaderLayoutQualifiers(TInfoSinkBase &out,
+                                               sh::TLayoutTessEvaluationType inputPrimitive,
+                                               sh::TLayoutTessEvaluationType inputVertexSpacing,
+                                               sh::TLayoutTessEvaluationType inputOrdering,
+                                               sh::TLayoutTessEvaluationType inputPoint);
+
+void EmitEarlyFragmentTestsGLSL(const TCompiler &, TInfoSinkBase &sink);
+void EmitWorkGroupSizeGLSL(const TCompiler &, TInfoSinkBase &sink);
+void EmitMultiviewGLSL(const TCompiler &,
+                       const ShCompileOptions &,
+                       const TExtension,
+                       const TBehavior,
+                       TInfoSinkBase &sink);
 
 }  // namespace sh
 

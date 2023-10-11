@@ -16,11 +16,6 @@
 #include "common/FastVector.h"
 #include "common/angleutils.h"
 
-namespace gl
-{
-class Context;
-}  // namespace gl
-
 namespace angle
 {
 template <typename HaystackT, typename NeedleT>
@@ -31,14 +26,55 @@ bool IsInContainer(const HaystackT &haystack, const NeedleT &needle)
 
 using SubjectIndex = size_t;
 
+// Messages are used to distinguish different Subject events that get sent to a single Observer.
+// It could be possible to improve the handling by using different callback functions instead
+// of a single handler function. But in some cases we want to share a single binding between
+// Observer and Subject and handle different types of events.
 enum class SubjectMessage
 {
-    CONTENTS_CHANGED,
-    STORAGE_CHANGED,
-    BINDING_CHANGED,
-    DEPENDENT_DIRTY_BITS,
-    RESOURCE_MAPPED,
-    RESOURCE_UNMAPPED,
+    // Used by gl::VertexArray to notify gl::Context of a gl::Buffer binding count change. Triggers
+    // a validation cache update. Also used by gl::Texture to notify gl::Framebuffer of loops.
+    BindingChanged,
+
+    // Only the contents (pixels, bytes, etc) changed in this Subject. Distinct from the object
+    // storage.
+    ContentsChanged,
+
+    // Sent by gl::Sampler, gl::Texture, gl::Framebuffer and others to notifiy gl::Context. This
+    // flag indicates to call syncState before next use.
+    DirtyBitsFlagged,
+
+    // Generic state change message. Used in multiple places for different purposes.
+    SubjectChanged,
+
+    // Indicates a bound gl::Buffer is now mapped or unmapped. Passed from gl::Buffer, through
+    // gl::VertexArray, into gl::Context. Used to track validation.
+    SubjectMapped,
+    SubjectUnmapped,
+    // Indicates a bound buffer's storage was reallocated due to glBufferData call or optimizations
+    // to prevent having to flush pending commands and waiting for the GPU to become idle.
+    InternalMemoryAllocationChanged,
+
+    // Indicates an external change to the default framebuffer.
+    SurfaceChanged,
+    // Indicates the system framebuffer's swapchain changed, i.e. color buffer changed but no
+    // depth/stencil buffer change.
+    SwapchainImageChanged,
+
+    // Indicates a separable program's textures or images changed in the ProgramExecutable.
+    ProgramTextureOrImageBindingChanged,
+    // Indicates a separable program was successfully re-linked.
+    ProgramRelinked,
+    // Indicates a separable program's sampler uniforms were updated.
+    SamplerUniformsUpdated,
+    // Other types of uniform change.
+    ProgramUniformUpdated,
+
+    // Indicates a Storage of back-end in gl::Texture has been released.
+    StorageReleased,
+
+    // Indicates that all pending updates are complete in the subject.
+    InitializationComplete,
 };
 
 // The observing class inherits from this interface class.
@@ -46,9 +82,7 @@ class ObserverInterface
 {
   public:
     virtual ~ObserverInterface();
-    virtual void onSubjectStateChange(const gl::Context *context,
-                                      SubjectIndex index,
-                                      SubjectMessage message) = 0;
+    virtual void onSubjectStateChange(SubjectIndex index, SubjectMessage message) = 0;
 };
 
 class ObserverBindingBase
@@ -58,6 +92,9 @@ class ObserverBindingBase
         : mObserver(observer), mIndex(subjectIndex)
     {}
     virtual ~ObserverBindingBase() {}
+
+    ObserverBindingBase(const ObserverBindingBase &other)            = default;
+    ObserverBindingBase &operator=(const ObserverBindingBase &other) = default;
 
     ObserverInterface *getObserver() const { return mObserver; }
     SubjectIndex getSubjectIndex() const { return mIndex; }
@@ -69,6 +106,8 @@ class ObserverBindingBase
     SubjectIndex mIndex;
 };
 
+constexpr size_t kMaxFixedObservers = 8;
+
 // Maintains a list of observer bindings. Sends update messages to the observer.
 class Subject : NonCopyable
 {
@@ -76,16 +115,16 @@ class Subject : NonCopyable
     Subject();
     virtual ~Subject();
 
-    void onStateChange(const gl::Context *context, SubjectMessage message) const;
+    void onStateChange(SubjectMessage message) const;
     bool hasObservers() const;
     void resetObservers();
+    ANGLE_INLINE size_t getObserversCount() const { return mObservers.size(); }
 
     ANGLE_INLINE void addObserver(ObserverBindingBase *observer)
     {
         ASSERT(!IsInContainer(mObservers, observer));
         mObservers.push_back(observer);
     }
-
     ANGLE_INLINE void removeObserver(ObserverBindingBase *observer)
     {
         ASSERT(IsInContainer(mObservers, observer));
@@ -95,7 +134,6 @@ class Subject : NonCopyable
   private:
     // Keep a short list of observers so we can allocate/free them quickly. But since we support
     // unlimited bindings, have a spill-over list of that uses dynamic allocation.
-    static constexpr size_t kMaxFixedObservers = 8;
     angle::FastVector<ObserverBindingBase *, kMaxFixedObservers> mObservers;
 };
 
@@ -103,6 +141,7 @@ class Subject : NonCopyable
 class ObserverBinding final : public ObserverBindingBase
 {
   public:
+    ObserverBinding();
     ObserverBinding(ObserverInterface *observer, SubjectIndex index);
     ~ObserverBinding() override;
     ObserverBinding(const ObserverBinding &other);
@@ -112,7 +151,7 @@ class ObserverBinding final : public ObserverBindingBase
 
     ANGLE_INLINE void reset() { bind(nullptr); }
 
-    void onStateChange(const gl::Context *context, SubjectMessage message) const;
+    void onStateChange(SubjectMessage message) const;
     void onSubjectReset() override;
 
     ANGLE_INLINE const Subject *getSubject() const { return mSubject; }

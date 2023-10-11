@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2018 The ANGLE Project Authors. All rights reserved.
+// Copyright 2018 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -24,6 +24,8 @@ struct TLayoutQualifier;
 class AtomicCounterFunctionHLSL final : angle::NonCopyable
 {
   public:
+    AtomicCounterFunctionHLSL(bool forceResolution);
+
     ImmutableString useAtomicCounterFunction(const ImmutableString &name);
 
     void atomicCounterFunctionHeader(TInfoSinkBase &out);
@@ -38,6 +40,7 @@ class AtomicCounterFunctionHLSL final : angle::NonCopyable
     };
 
     std::map<ImmutableString, AtomicCounterFunction> mAtomicCounterFunctions;
+    bool mForceResolution;
 };
 
 ImmutableString getAtomicCounterNameForBinding(int binding);

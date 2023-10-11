@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2012 The ANGLE Project Authors. All rights reserved.
+// Copyright 2012 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -48,7 +48,8 @@ class SwapChain11 final : public SwapChainD3D
 
     const TextureHelper11 &getOffscreenTexture();
     const d3d11::RenderTargetView &getRenderTarget();
-    const d3d11::SharedSRV &getRenderTargetShaderResource(d3d::Context *context);
+    angle::Result getRenderTargetShaderResource(d3d::Context *context,
+                                                const d3d11::SharedSRV **outSRV);
 
     const TextureHelper11 &getDepthStencilTexture();
     const d3d11::DepthStencilView &getDepthStencil();

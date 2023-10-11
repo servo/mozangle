@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2013 The ANGLE Project Authors. All rights reserved.
+// Copyright 2013 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -55,11 +55,11 @@ angle::Result VertexBuffer11::initialize(const gl::Context *context,
 
         if (dynamicUsage)
         {
-            mBuffer.setDebugName("VertexBuffer11 (dynamic)");
+            mBuffer.setInternalName("VertexBuffer11(dynamic)");
         }
         else
         {
-            mBuffer.setDebugName("VertexBuffer11 (static)");
+            mBuffer.setInternalName("VertexBuffer11(static)");
         }
     }
 

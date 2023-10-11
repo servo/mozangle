@@ -84,8 +84,9 @@ class ProgramImpl : angle::NonCopyable
 
     virtual std::unique_ptr<LinkEvent> link(const gl::Context *context,
                                             const gl::ProgramLinkedResources &resources,
-                                            gl::InfoLog &infoLog)          = 0;
-    virtual GLboolean validate(const gl::Caps &caps, gl::InfoLog *infoLog) = 0;
+                                            gl::InfoLog &infoLog,
+                                            const gl::ProgramMergedVaryings &mergedVaryings) = 0;
+    virtual GLboolean validate(const gl::Caps &caps, gl::InfoLog *infoLog)                   = 0;
 
     virtual void setUniform1fv(GLint location, GLsizei count, const GLfloat *v) = 0;
     virtual void setUniform2fv(GLint location, GLsizei count, const GLfloat *v) = 0;
@@ -145,13 +146,6 @@ class ProgramImpl : angle::NonCopyable
                                GLint location,
                                GLuint *params) const                                           = 0;
 
-    // CHROMIUM_path_rendering
-    // Set parameters to control fragment shader input variable interpolation
-    virtual void setPathFragmentInputGen(const std::string &inputName,
-                                         GLenum genMode,
-                                         GLint components,
-                                         const GLfloat *coeffs) = 0;
-
     // Implementation-specific method for ignoring unreferenced uniforms. Some implementations may
     // perform more extensive analysis and ignore some locations that ANGLE doesn't detect as
     // unreferenced. This method is not required to be overriden by a back-end.
@@ -164,6 +158,8 @@ class ProgramImpl : angle::NonCopyable
 
     virtual angle::Result syncState(const gl::Context *context,
                                     const gl::Program::DirtyBits &dirtyBits);
+
+    virtual angle::Result onLabelUpdate(const gl::Context *context);
 
   protected:
     const gl::ProgramState &mState;

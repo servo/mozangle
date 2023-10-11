@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2002-2014 The ANGLE Project Authors. All rights reserved.
+// Copyright 2002 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -19,6 +19,7 @@ namespace gl
 namespace
 {
 constexpr angle::SubjectIndex kImplementationSubjectIndex = 0;
+constexpr size_t kInvalidContentsObserverIndex            = std::numeric_limits<size_t>::max();
 }  // anonymous namespace
 
 BufferState::BufferState()
@@ -33,13 +34,16 @@ BufferState::BufferState()
       mMapLength(0),
       mBindingCount(0),
       mTransformFeedbackIndexedBindingCount(0),
-      mTransformFeedbackGenericBindingCount(0)
+      mTransformFeedbackGenericBindingCount(0),
+      mImmutable(GL_FALSE),
+      mStorageExtUsageFlags(0),
+      mExternal(GL_FALSE)
 {}
 
 BufferState::~BufferState() {}
 
-Buffer::Buffer(rx::GLImplFactory *factory, GLuint id)
-    : RefCountObject(id),
+Buffer::Buffer(rx::GLImplFactory *factory, BufferID id)
+    : RefCountObject(factory->generateSerial(), id),
       mImpl(factory->createBuffer(mState)),
       mImplObserver(this, kImplementationSubjectIndex)
 {
@@ -58,14 +62,37 @@ void Buffer::onDestroy(const Context *context)
         mImpl->destroy(context);
 }
 
-void Buffer::setLabel(const Context *context, const std::string &label)
+angle::Result Buffer::setLabel(const Context *context, const std::string &label)
 {
     mState.mLabel = label;
+    if (mImpl)
+    {
+        return mImpl->onLabelUpdate(context);
+    }
+    return angle::Result::Continue;
 }
 
 const std::string &Buffer::getLabel() const
 {
     return mState.mLabel;
+}
+
+angle::Result Buffer::bufferStorageExternal(Context *context,
+                                            BufferBinding target,
+                                            GLsizeiptr size,
+                                            GLeglClientBufferEXT clientBuffer,
+                                            GLbitfield flags)
+{
+    return bufferExternalDataImpl(context, target, clientBuffer, size, flags);
+}
+
+angle::Result Buffer::bufferStorage(Context *context,
+                                    BufferBinding target,
+                                    GLsizeiptr size,
+                                    const void *data,
+                                    GLbitfield flags)
+{
+    return bufferDataImpl(context, target, data, size, BufferUsage::InvalidEnum, flags);
 }
 
 angle::Result Buffer::bufferData(Context *context,
@@ -74,12 +101,36 @@ angle::Result Buffer::bufferData(Context *context,
                                  GLsizeiptr size,
                                  BufferUsage usage)
 {
+    GLbitfield flags = (GL_MAP_READ_BIT | GL_MAP_WRITE_BIT | GL_DYNAMIC_STORAGE_BIT_EXT);
+    return bufferDataImpl(context, target, data, size, usage, flags);
+}
+
+angle::Result Buffer::bufferDataImpl(Context *context,
+                                     BufferBinding target,
+                                     const void *data,
+                                     GLsizeiptr size,
+                                     BufferUsage usage,
+                                     GLbitfield flags)
+{
     const void *dataForImpl = data;
+
+    if (mState.isMapped())
+    {
+        // Per the OpenGL ES 3.0 spec, buffers are implicity unmapped when a call to
+        // BufferData happens on a mapped buffer:
+        //
+        //     If any portion of the buffer object is mapped in the current context or any context
+        //     current to another thread, it is as though UnmapBuffer (see section 2.10.3) is
+        //     executed in each such context prior to deleting the existing data store.
+        //
+        GLboolean dontCare = GL_FALSE;
+        ANGLE_TRY(unmap(context, &dontCare));
+    }
 
     // If we are using robust resource init, make sure the buffer starts cleared.
     // Note: the Context is checked for nullptr because of some testing code.
     // TODO(jmadill): Investigate lazier clearing.
-    if (context && context->getState().isRobustResourceInitEnabled() && !data && size > 0)
+    if (context && context->isRobustResourceInitEnabled() && !data && size > 0)
     {
         angle::MemoryBuffer *scratchBuffer = nullptr;
         ANGLE_CHECK_GL_ALLOC(
@@ -87,14 +138,81 @@ angle::Result Buffer::bufferData(Context *context,
         dataForImpl = scratchBuffer->data();
     }
 
-    ANGLE_TRY(mImpl->setData(context, target, dataForImpl, size, usage));
+    if (mImpl->setDataWithUsageFlags(context, target, nullptr, dataForImpl, size, usage, flags) ==
+        angle::Result::Stop)
+    {
+        // If setData fails, the buffer contents are undefined. Set a zero size to indicate that.
+        mIndexRangeCache.clear();
+        mState.mSize = 0;
+
+        // Notify when storage changes.
+        onStateChange(angle::SubjectMessage::SubjectChanged);
+
+        return angle::Result::Stop;
+    }
+
+    bool wholeBuffer = size == mState.mSize;
 
     mIndexRangeCache.clear();
-    mState.mUsage = usage;
-    mState.mSize  = size;
+    mState.mUsage                = usage;
+    mState.mSize                 = size;
+    mState.mImmutable            = (usage == BufferUsage::InvalidEnum);
+    mState.mStorageExtUsageFlags = flags;
 
     // Notify when storage changes.
-    onStateChange(context, angle::SubjectMessage::STORAGE_CHANGED);
+    if (wholeBuffer)
+    {
+        onContentsChange();
+    }
+    else
+    {
+        onStateChange(angle::SubjectMessage::SubjectChanged);
+    }
+
+    return angle::Result::Continue;
+}
+
+angle::Result Buffer::bufferExternalDataImpl(Context *context,
+                                             BufferBinding target,
+                                             GLeglClientBufferEXT clientBuffer,
+                                             GLsizeiptr size,
+                                             GLbitfield flags)
+{
+    if (mState.isMapped())
+    {
+        // Per the OpenGL ES 3.0 spec, buffers are implicitly unmapped when a call to
+        // BufferData happens on a mapped buffer:
+        //
+        //     If any portion of the buffer object is mapped in the current context or any context
+        //     current to another thread, it is as though UnmapBuffer (see section 2.10.3) is
+        //     executed in each such context prior to deleting the existing data store.
+        //
+        GLboolean dontCare = GL_FALSE;
+        ANGLE_TRY(unmap(context, &dontCare));
+    }
+
+    if (mImpl->setDataWithUsageFlags(context, target, clientBuffer, nullptr, size,
+                                     BufferUsage::InvalidEnum, flags) == angle::Result::Stop)
+    {
+        // If setData fails, the buffer contents are undefined. Set a zero size to indicate that.
+        mIndexRangeCache.clear();
+        mState.mSize = 0;
+
+        // Notify when storage changes.
+        onStateChange(angle::SubjectMessage::SubjectChanged);
+
+        return angle::Result::Stop;
+    }
+
+    mIndexRangeCache.clear();
+    mState.mUsage                = BufferUsage::InvalidEnum;
+    mState.mSize                 = size;
+    mState.mImmutable            = GL_TRUE;
+    mState.mStorageExtUsageFlags = flags;
+    mState.mExternal             = GL_TRUE;
+
+    // Notify when storage changes.
+    onStateChange(angle::SubjectMessage::SubjectChanged);
 
     return angle::Result::Continue;
 }
@@ -111,7 +229,7 @@ angle::Result Buffer::bufferSubData(const Context *context,
                                      static_cast<unsigned int>(size));
 
     // Notify when data changes.
-    onStateChange(context, angle::SubjectMessage::CONTENTS_CHANGED);
+    onContentsChange();
 
     return angle::Result::Continue;
 }
@@ -129,7 +247,7 @@ angle::Result Buffer::copyBufferSubData(const Context *context,
                                      static_cast<unsigned int>(size));
 
     // Notify when data changes.
-    onStateChange(context, angle::SubjectMessage::CONTENTS_CHANGED);
+    onContentsChange();
 
     return angle::Result::Continue;
 }
@@ -151,7 +269,7 @@ angle::Result Buffer::map(const Context *context, GLenum access)
     mIndexRangeCache.clear();
 
     // Notify when state changes.
-    onStateChange(context, angle::SubjectMessage::RESOURCE_MAPPED);
+    onStateChange(angle::SubjectMessage::SubjectMapped);
 
     return angle::Result::Continue;
 }
@@ -185,7 +303,7 @@ angle::Result Buffer::mapRange(const Context *context,
     }
 
     // Notify when state changes.
-    onStateChange(context, angle::SubjectMessage::RESOURCE_MAPPED);
+    onStateChange(angle::SubjectMessage::SubjectMapped);
 
     return angle::Result::Continue;
 }
@@ -205,25 +323,19 @@ angle::Result Buffer::unmap(const Context *context, GLboolean *result)
     mState.mAccessFlags = 0;
 
     // Notify when data changes.
-    onStateChange(context, angle::SubjectMessage::RESOURCE_UNMAPPED);
+    onStateChange(angle::SubjectMessage::SubjectUnmapped);
 
     return angle::Result::Continue;
 }
 
-void Buffer::onTransformFeedback(const Context *context)
+void Buffer::onDataChanged()
 {
     mIndexRangeCache.clear();
 
     // Notify when data changes.
-    onStateChange(context, angle::SubjectMessage::CONTENTS_CHANGED);
-}
+    onContentsChange();
 
-void Buffer::onPixelPack(const Context *context)
-{
-    mIndexRangeCache.clear();
-
-    // Notify when data changes.
-    onStateChange(context, angle::SubjectMessage::CONTENTS_CHANGED);
+    mImpl->onDataChanged();
 }
 
 angle::Result Buffer::getIndexRange(const gl::Context *context,
@@ -266,7 +378,7 @@ void Buffer::onTFBindingChanged(const Context *context, bool bound, bool indexed
         ASSERT(bound || mState.mTransformFeedbackIndexedBindingCount > 0);
         mState.mTransformFeedbackIndexedBindingCount += bound ? 1 : -1;
 
-        onStateChange(context, angle::SubjectMessage::BINDING_CHANGED);
+        onStateChange(angle::SubjectMessage::BindingChanged);
     }
     else
     {
@@ -274,12 +386,64 @@ void Buffer::onTFBindingChanged(const Context *context, bool bound, bool indexed
     }
 }
 
-void Buffer::onSubjectStateChange(const gl::Context *context,
-                                  angle::SubjectIndex index,
-                                  angle::SubjectMessage message)
+angle::Result Buffer::getSubData(const gl::Context *context,
+                                 GLintptr offset,
+                                 GLsizeiptr size,
+                                 void *outData)
+{
+    return mImpl->getSubData(context, offset, size, outData);
+}
+
+void Buffer::onSubjectStateChange(angle::SubjectIndex index, angle::SubjectMessage message)
 {
     // Pass it along!
     ASSERT(index == kImplementationSubjectIndex);
-    onStateChange(context, message);
+    ASSERT(message == angle::SubjectMessage::SubjectChanged ||
+           message == angle::SubjectMessage::InternalMemoryAllocationChanged);
+    onStateChange(message);
+}
+
+size_t Buffer::getContentsObserverIndex(VertexArray *vertexArray, uint32_t bufferIndex) const
+{
+    for (size_t observerIndex = 0; observerIndex < mContentsObservers.size(); ++observerIndex)
+    {
+        const ContentsObserver &observer = mContentsObservers[observerIndex];
+        if (observer.vertexArray == vertexArray && observer.bufferIndex == bufferIndex)
+        {
+            return observerIndex;
+        }
+    }
+
+    return kInvalidContentsObserverIndex;
+}
+
+void Buffer::addContentsObserver(VertexArray *vertexArray, uint32_t bufferIndex)
+{
+    if (getContentsObserverIndex(vertexArray, bufferIndex) == kInvalidContentsObserverIndex)
+    {
+        mContentsObservers.push_back({vertexArray, bufferIndex});
+    }
+}
+
+void Buffer::removeContentsObserver(VertexArray *vertexArray, uint32_t bufferIndex)
+{
+    size_t foundObserver = getContentsObserverIndex(vertexArray, bufferIndex);
+    if (foundObserver != kInvalidContentsObserverIndex)
+    {
+        size_t lastObserverIndex = mContentsObservers.size() - 1;
+        if (foundObserver != lastObserverIndex)
+        {
+            mContentsObservers[foundObserver] = mContentsObservers[lastObserverIndex];
+        }
+        mContentsObservers.pop_back();
+    }
+}
+
+void Buffer::onContentsChange()
+{
+    for (const ContentsObserver &observer : mContentsObservers)
+    {
+        observer.vertexArray->onBufferContentsChange(observer.bufferIndex);
+    }
 }
 }  // namespace gl

@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2002-2013 The ANGLE Project Authors. All rights reserved.
+// Copyright 2002 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -34,14 +34,16 @@ const unsigned int Float32One   = 0x3F800000;
 const unsigned short Float16One = 0x3C00;
 
 template <typename T>
-inline bool isPow2(T x)
+inline constexpr bool isPow2(T x)
 {
     static_assert(std::is_integral<T>::value, "isPow2 must be called on an integer type.");
     return (x & (x - 1)) == 0 && (x != 0);
 }
 
-inline int log2(int x)
+template <typename T>
+inline int log2(T x)
 {
+    static_assert(std::is_integral<T>::value, "log2 must be called on an integer type.");
     int r = 0;
     while ((x >> r) > 1)
         r++;
@@ -117,6 +119,38 @@ inline T clamp(T x, MIN min, MAX max)
     return x > min ? (x > max ? max : x) : min;
 }
 
+template <typename T>
+T clampForBitCount(T value, size_t bitCount)
+{
+    static_assert(std::numeric_limits<T>::is_integer, "T must be an integer.");
+
+    if (bitCount == 0)
+    {
+        constexpr T kZero = 0;
+        return kZero;
+    }
+    ASSERT(bitCount <= sizeof(T) * 8);
+
+    constexpr bool kIsSigned = std::numeric_limits<T>::is_signed;
+    ASSERT((bitCount > 1) || !kIsSigned);
+
+    T min = 0;
+    T max = 0;
+    if (bitCount == sizeof(T) * 8)
+    {
+        min = std::numeric_limits<T>::min();
+        max = std::numeric_limits<T>::max();
+    }
+    else
+    {
+        constexpr T kOne = 1;
+        min              = (kIsSigned) ? -1 * (kOne << (bitCount - 1)) : 0;
+        max              = (kIsSigned) ? (kOne << (bitCount - 1)) - 1 : (kOne << bitCount) - 1;
+    }
+
+    return gl::clamp(value, min, max);
+}
+
 inline float clamp01(float x)
 {
     return clamp(x, 0.0f, 1.0f);
@@ -181,15 +215,27 @@ destType bitCast(const sourceType &source)
     return output;
 }
 
+// https://stackoverflow.com/a/37581284
+template <typename T>
+static constexpr double normalize(T value)
+{
+    return value < 0 ? -static_cast<double>(value) / std::numeric_limits<T>::min()
+                     : static_cast<double>(value) / std::numeric_limits<T>::max();
+}
+
 inline unsigned short float32ToFloat16(float fp32)
 {
     unsigned int fp32i = bitCast<unsigned int>(fp32);
     unsigned int sign  = (fp32i & 0x80000000) >> 16;
     unsigned int abs   = fp32i & 0x7FFFFFFF;
 
-    if (abs > 0x47FFEFFF)  // Infinity
-    {
-        return static_cast<unsigned short>(sign | 0x7FFF);
+    if (abs > 0x7F800000)
+    {  // NaN
+        return 0x7FFF;
+    }
+    else if (abs > 0x47FFEFFF)
+    {  // Infinity
+        return static_cast<uint16_t>(sign | 0x7C00);
     }
     else if (abs < 0x38800000)  // Denormal
     {
@@ -234,8 +280,9 @@ inline unsigned short float32ToFloat11(float fp32)
     const unsigned short float11BitMask      = 0x7FF;
     const unsigned int float11ExponentBias   = 14;
 
-    const unsigned int float32Maxfloat11 = 0x477E0000;
-    const unsigned int float32Minfloat11 = 0x38800000;
+    const unsigned int float32Maxfloat11       = 0x477E0000;
+    const unsigned int float32MinNormfloat11   = 0x38800000;
+    const unsigned int float32MinDenormfloat11 = 0x35000080;
 
     const unsigned int float32Bits = bitCast<unsigned int>(fp32);
     const bool float32Sign         = (float32Bits & float32SignMask) == float32SignMask;
@@ -271,14 +318,20 @@ inline unsigned short float32ToFloat11(float fp32)
         // The number is too large to be represented as a float11, set to max
         return float11Max;
     }
+    else if (float32Val < float32MinDenormfloat11)
+    {
+        // The number is too small to be represented as a denormalized float11, set to 0
+        return 0;
+    }
     else
     {
-        if (float32Val < float32Minfloat11)
+        if (float32Val < float32MinNormfloat11)
         {
             // The number is too small to be represented as a normalized float11
             // Convert it to a denormalized value.
             const unsigned int shift = (float32ExponentBias - float11ExponentBias) -
                                        (float32Val >> float32ExponentFirstBit);
+            ASSERT(shift < 32);
             float32Val =
                 ((1 << float32ExponentFirstBit) | (float32Val & float32MantissaMask)) >> shift;
         }
@@ -307,8 +360,9 @@ inline unsigned short float32ToFloat10(float fp32)
     const unsigned short float10BitMask      = 0x3FF;
     const unsigned int float10ExponentBias   = 14;
 
-    const unsigned int float32Maxfloat10 = 0x477C0000;
-    const unsigned int float32Minfloat10 = 0x38800000;
+    const unsigned int float32Maxfloat10       = 0x477C0000;
+    const unsigned int float32MinNormfloat10   = 0x38800000;
+    const unsigned int float32MinDenormfloat10 = 0x35800040;
 
     const unsigned int float32Bits = bitCast<unsigned int>(fp32);
     const bool float32Sign         = (float32Bits & float32SignMask) == float32SignMask;
@@ -326,7 +380,7 @@ inline unsigned short float32ToFloat10(float fp32)
         }
         else if (float32Sign)
         {
-            // -INF is clamped to 0 since float11 is positive only
+            // -INF is clamped to 0 since float10 is positive only
             return 0;
         }
         else
@@ -341,23 +395,29 @@ inline unsigned short float32ToFloat10(float fp32)
     }
     else if (float32Val > float32Maxfloat10)
     {
-        // The number is too large to be represented as a float11, set to max
+        // The number is too large to be represented as a float10, set to max
         return float10Max;
+    }
+    else if (float32Val < float32MinDenormfloat10)
+    {
+        // The number is too small to be represented as a denormalized float10, set to 0
+        return 0;
     }
     else
     {
-        if (float32Val < float32Minfloat10)
+        if (float32Val < float32MinNormfloat10)
         {
-            // The number is too small to be represented as a normalized float11
+            // The number is too small to be represented as a normalized float10
             // Convert it to a denormalized value.
             const unsigned int shift = (float32ExponentBias - float10ExponentBias) -
                                        (float32Val >> float32ExponentFirstBit);
+            ASSERT(shift < 32);
             float32Val =
                 ((1 << float32ExponentFirstBit) | (float32Val & float32MantissaMask)) >> shift;
         }
         else
         {
-            // Rebias the exponent to represent the value as a normalized float11
+            // Rebias the exponent to represent the value as a normalized float10
             float32Val += 0xC8000000;
         }
 
@@ -403,10 +463,10 @@ inline float float11ToFloat32(unsigned short fp11)
     }
 }
 
-inline float float10ToFloat32(unsigned short fp11)
+inline float float10ToFloat32(unsigned short fp10)
 {
-    unsigned short exponent = (fp11 >> 5) & 0x1F;
-    unsigned short mantissa = fp11 & 0x1F;
+    unsigned short exponent = (fp10 >> 5) & 0x1F;
+    unsigned short mantissa = fp10 & 0x1F;
 
     if (exponent == 0x1F)
     {
@@ -441,14 +501,13 @@ inline float float10ToFloat32(unsigned short fp11)
     }
 }
 
-// Convers to and from float and 16.16 fixed point format.
-
-inline float FixedToFloat(uint32_t fixedInput)
+// Converts to and from float and 16.16 fixed point format.
+inline float ConvertFixedToFloat(int32_t fixedInput)
 {
     return static_cast<float>(fixedInput) / 65536.0f;
 }
 
-inline uint32_t FloatToFixed(float floatInput)
+inline uint32_t ConvertFloatToFixed(float floatInput)
 {
     static constexpr uint32_t kHighest = 32767 * 65536 + 65535;
     static constexpr uint32_t kLowest  = static_cast<uint32_t>(-32768 * 65536 + 65535);
@@ -490,6 +549,7 @@ inline float normalizedToFloat(T input)
 {
     static_assert(std::numeric_limits<T>::is_integer, "T must be an integer.");
     static_assert(inputBitCount < (sizeof(T) * 8), "T must have more bits than inputBitCount.");
+    ASSERT((input & ~((1 << inputBitCount) - 1)) == 0);
 
     if (inputBitCount > 23)
     {
@@ -507,7 +567,7 @@ inline float normalizedToFloat(T input)
 template <typename T>
 inline T floatToNormalized(float input)
 {
-    if (sizeof(T) > 2)
+    if constexpr (sizeof(T) > 2)
     {
         // float has only a 23 bit mantissa, so we need to do the calculation in double precision
         return static_cast<T>(std::numeric_limits<T>::max() * static_cast<double>(input) + 0.5);
@@ -617,7 +677,7 @@ inline unsigned int average(unsigned int a, unsigned int b)
 
 inline int average(int a, int b)
 {
-    long long average = (static_cast<long long>(a) + static_cast<long long>(b)) / 2ll;
+    long long average = (static_cast<long long>(a) + static_cast<long long>(b)) / 2LL;
     return static_cast<int>(average);
 }
 
@@ -967,54 +1027,96 @@ inline uint32_t BitfieldReverse(uint32_t value)
 }
 
 // Count the 1 bits.
-#if defined(_M_IX86) || defined(_M_X64)
-#    define ANGLE_HAS_BITCOUNT_32
+#if defined(_MSC_VER) && !defined(__clang__)
+#    if defined(_M_IX86) || defined(_M_X64)
+namespace priv
+{
+// Check POPCNT instruction support and cache the result.
+// https://docs.microsoft.com/en-us/cpp/intrinsics/popcnt16-popcnt-popcnt64#remarks
+static const bool kHasPopcnt = [] {
+    int info[4];
+    __cpuid(&info[0], 1);
+    return static_cast<bool>(info[2] & 0x800000);
+}();
+}  // namespace priv
+
+// Polyfills for x86/x64 CPUs without POPCNT.
+// https://graphics.stanford.edu/~seander/bithacks.html#CountBitsSetParallel
+inline int BitCountPolyfill(uint32_t bits)
+{
+    bits = bits - ((bits >> 1) & 0x55555555);
+    bits = (bits & 0x33333333) + ((bits >> 2) & 0x33333333);
+    bits = ((bits + (bits >> 4) & 0x0F0F0F0F) * 0x01010101) >> 24;
+    return static_cast<int>(bits);
+}
+
+inline int BitCountPolyfill(uint64_t bits)
+{
+    bits = bits - ((bits >> 1) & 0x5555555555555555ull);
+    bits = (bits & 0x3333333333333333ull) + ((bits >> 2) & 0x3333333333333333ull);
+    bits = ((bits + (bits >> 4) & 0x0F0F0F0F0F0F0F0Full) * 0x0101010101010101ull) >> 56;
+    return static_cast<int>(bits);
+}
+
 inline int BitCount(uint32_t bits)
 {
-    return static_cast<int>(__popcnt(bits));
+    if (priv::kHasPopcnt)
+    {
+        return static_cast<int>(__popcnt(bits));
+    }
+    return BitCountPolyfill(bits);
 }
-#    if defined(_M_X64)
-#        define ANGLE_HAS_BITCOUNT_64
+
 inline int BitCount(uint64_t bits)
 {
-    return static_cast<int>(__popcnt64(bits));
+    if (priv::kHasPopcnt)
+    {
+#        if defined(_M_X64)
+        return static_cast<int>(__popcnt64(bits));
+#        else   // x86
+        return static_cast<int>(__popcnt(static_cast<uint32_t>(bits >> 32)) +
+                                __popcnt(static_cast<uint32_t>(bits)));
+#        endif  // defined(_M_X64)
+    }
+    return BitCountPolyfill(bits);
 }
-#    endif  // defined(_M_X64)
-#endif      // defined(_M_IX86) || defined(_M_X64)
 
-#if defined(ANGLE_PLATFORM_POSIX)
-#    define ANGLE_HAS_BITCOUNT_32
+#    elif defined(_M_ARM) || defined(_M_ARM64)
+
+// MSVC's _CountOneBits* intrinsics are not defined for ARM64, moreover they do not use dedicated
+// NEON instructions.
+
+inline int BitCount(uint32_t bits)
+{
+    // cast bits to 8x8 datatype and use VCNT on it
+    const uint8x8_t vsum = vcnt_u8(vcreate_u8(static_cast<uint64_t>(bits)));
+
+    // pairwise sums: 8x8 -> 16x4 -> 32x2
+    return static_cast<int>(vget_lane_u32(vpaddl_u16(vpaddl_u8(vsum)), 0));
+}
+
+inline int BitCount(uint64_t bits)
+{
+    // cast bits to 8x8 datatype and use VCNT on it
+    const uint8x8_t vsum = vcnt_u8(vcreate_u8(bits));
+
+    // pairwise sums: 8x8 -> 16x4 -> 32x2 -> 64x1
+    return static_cast<int>(vget_lane_u64(vpaddl_u32(vpaddl_u16(vpaddl_u8(vsum))), 0));
+}
+#    endif  // defined(_M_IX86) || defined(_M_X64)
+#endif      // defined(_MSC_VER) && !defined(__clang__)
+
+#if defined(ANGLE_PLATFORM_POSIX) || defined(__clang__)
 inline int BitCount(uint32_t bits)
 {
     return __builtin_popcount(bits);
 }
 
-#    if defined(ANGLE_IS_64_BIT_CPU)
-#        define ANGLE_HAS_BITCOUNT_64
 inline int BitCount(uint64_t bits)
 {
     return __builtin_popcountll(bits);
 }
-#    endif  // defined(ANGLE_IS_64_BIT_CPU)
-#endif      // defined(ANGLE_PLATFORM_POSIX)
-
-int BitCountPolyfill(uint32_t bits);
-
-#if !defined(ANGLE_HAS_BITCOUNT_32)
-inline int BitCount(const uint32_t bits)
-{
-    return BitCountPolyfill(bits);
-}
-#endif  // !defined(ANGLE_HAS_BITCOUNT_32)
-
-#if !defined(ANGLE_HAS_BITCOUNT_64)
-inline int BitCount(const uint64_t bits)
-{
-    return BitCount(static_cast<uint32_t>(bits >> 32)) + BitCount(static_cast<uint32_t>(bits));
-}
-#endif  // !defined(ANGLE_HAS_BITCOUNT_64)
-#undef ANGLE_HAS_BITCOUNT_32
-#undef ANGLE_HAS_BITCOUNT_64
+#endif  // defined(ANGLE_PLATFORM_POSIX) || defined(__clang__)
 
 inline int BitCount(uint8_t bits)
 {
@@ -1038,17 +1140,61 @@ inline unsigned long ScanForward(uint32_t bits)
     return firstBitIndex;
 }
 
-#    if defined(ANGLE_IS_64_BIT_CPU)
 inline unsigned long ScanForward(uint64_t bits)
 {
     ASSERT(bits != 0u);
     unsigned long firstBitIndex = 0ul;
-    unsigned char ret           = _BitScanForward64(&firstBitIndex, bits);
+#    if defined(ANGLE_IS_64_BIT_CPU)
+    unsigned char ret = _BitScanForward64(&firstBitIndex, bits);
+#    else
+    unsigned char ret;
+    if (static_cast<uint32_t>(bits) == 0)
+    {
+        ret = _BitScanForward(&firstBitIndex, static_cast<uint32_t>(bits >> 32));
+        firstBitIndex += 32ul;
+    }
+    else
+    {
+        ret = _BitScanForward(&firstBitIndex, static_cast<uint32_t>(bits));
+    }
+#    endif  // defined(ANGLE_IS_64_BIT_CPU)
     ASSERT(ret != 0u);
     return firstBitIndex;
 }
+
+// Return the index of the most significant bit set. Indexing is such that bit 0 is the least
+// significant bit.
+inline unsigned long ScanReverse(uint32_t bits)
+{
+    ASSERT(bits != 0u);
+    unsigned long lastBitIndex = 0ul;
+    unsigned char ret          = _BitScanReverse(&lastBitIndex, bits);
+    ASSERT(ret != 0u);
+    return lastBitIndex;
+}
+
+inline unsigned long ScanReverse(uint64_t bits)
+{
+    ASSERT(bits != 0u);
+    unsigned long lastBitIndex = 0ul;
+#    if defined(ANGLE_IS_64_BIT_CPU)
+    unsigned char ret = _BitScanReverse64(&lastBitIndex, bits);
+#    else
+    unsigned char ret;
+    if (static_cast<uint32_t>(bits >> 32) == 0)
+    {
+        ret = _BitScanReverse(&lastBitIndex, static_cast<uint32_t>(bits));
+    }
+    else
+    {
+        ret = _BitScanReverse(&lastBitIndex, static_cast<uint32_t>(bits >> 32));
+        lastBitIndex += 32ul;
+    }
 #    endif  // defined(ANGLE_IS_64_BIT_CPU)
-#endif      // defined(ANGLE_PLATFORM_WINDOWS)
+    ASSERT(ret != 0u);
+    return lastBitIndex;
+}
+#endif  // defined(ANGLE_PLATFORM_WINDOWS)
 
 #if defined(ANGLE_PLATFORM_POSIX)
 inline unsigned long ScanForward(uint32_t bits)
@@ -1057,14 +1203,42 @@ inline unsigned long ScanForward(uint32_t bits)
     return static_cast<unsigned long>(__builtin_ctz(bits));
 }
 
-#    if defined(ANGLE_IS_64_BIT_CPU)
 inline unsigned long ScanForward(uint64_t bits)
 {
     ASSERT(bits != 0u);
+#    if defined(ANGLE_IS_64_BIT_CPU)
     return static_cast<unsigned long>(__builtin_ctzll(bits));
-}
+#    else
+    return static_cast<unsigned long>(static_cast<uint32_t>(bits) == 0
+                                          ? __builtin_ctz(static_cast<uint32_t>(bits >> 32)) + 32
+                                          : __builtin_ctz(static_cast<uint32_t>(bits)));
 #    endif  // defined(ANGLE_IS_64_BIT_CPU)
-#endif      // defined(ANGLE_PLATFORM_POSIX)
+}
+
+inline unsigned long ScanReverse(uint32_t bits)
+{
+    ASSERT(bits != 0u);
+    return static_cast<unsigned long>(sizeof(uint32_t) * CHAR_BIT - 1 - __builtin_clz(bits));
+}
+
+inline unsigned long ScanReverse(uint64_t bits)
+{
+    ASSERT(bits != 0u);
+#    if defined(ANGLE_IS_64_BIT_CPU)
+    return static_cast<unsigned long>(sizeof(uint64_t) * CHAR_BIT - 1 - __builtin_clzll(bits));
+#    else
+    if (static_cast<uint32_t>(bits >> 32) == 0)
+    {
+        return sizeof(uint32_t) * CHAR_BIT - 1 - __builtin_clz(static_cast<uint32_t>(bits));
+    }
+    else
+    {
+        return sizeof(uint32_t) * CHAR_BIT - 1 - __builtin_clz(static_cast<uint32_t>(bits >> 32)) +
+               32;
+    }
+#    endif  // defined(ANGLE_IS_64_BIT_CPU)
+}
+#endif  // defined(ANGLE_PLATFORM_POSIX)
 
 inline unsigned long ScanForward(uint8_t bits)
 {
@@ -1076,21 +1250,14 @@ inline unsigned long ScanForward(uint16_t bits)
     return ScanForward(static_cast<uint32_t>(bits));
 }
 
-// Return the index of the most significant bit set. Indexing is such that bit 0 is the least
-// significant bit.
-inline unsigned long ScanReverse(unsigned long bits)
+inline unsigned long ScanReverse(uint8_t bits)
 {
-    ASSERT(bits != 0u);
-#if defined(ANGLE_PLATFORM_WINDOWS)
-    unsigned long lastBitIndex = 0ul;
-    unsigned char ret          = _BitScanReverse(&lastBitIndex, bits);
-    ASSERT(ret != 0u);
-    return lastBitIndex;
-#elif defined(ANGLE_PLATFORM_POSIX)
-    return static_cast<unsigned long>(sizeof(unsigned long) * CHAR_BIT - 1 - __builtin_clzl(bits));
-#else
-#    error Please implement bit-scan-reverse for your platform!
-#endif
+    return ScanReverse(static_cast<uint32_t>(bits));
+}
+
+inline unsigned long ScanReverse(uint16_t bits)
+{
+    return ScanReverse(static_cast<uint32_t>(bits));
 }
 
 // Returns -1 on 0, otherwise the index of the least significant 1 bit as in GLSL.
@@ -1207,7 +1374,7 @@ inline int32_t WrappingMul(int32_t lhs, int32_t rhs)
     // The multiplication is guaranteed not to overflow.
     int64_t resultWide = lhsWide * rhsWide;
     // Implement the desired wrapping behavior by masking out the high-order 32 bits.
-    resultWide = resultWide & 0xffffffffll;
+    resultWide = resultWide & 0xffffffffLL;
     // Casting to a narrower signed type is fine since the casted value is representable in the
     // narrower type.
     return static_cast<int32_t>(resultWide);
@@ -1237,6 +1404,20 @@ T roundUp(const T value, const T alignment)
 }
 
 template <typename T>
+constexpr T roundUpPow2(const T value, const T alignment)
+{
+    ASSERT(gl::isPow2(alignment));
+    return (value + alignment - 1) & ~(alignment - 1);
+}
+
+template <typename T>
+constexpr T roundDownPow2(const T value, const T alignment)
+{
+    ASSERT(gl::isPow2(alignment));
+    return value & ~(alignment - 1);
+}
+
+template <typename T>
 angle::CheckedNumeric<T> CheckedRoundUp(const T value, const T alignment)
 {
     angle::CheckedNumeric<T> checkedValue(value);
@@ -1244,16 +1425,30 @@ angle::CheckedNumeric<T> CheckedRoundUp(const T value, const T alignment)
     return roundUp(checkedValue, checkedAlignment);
 }
 
-inline unsigned int UnsignedCeilDivide(unsigned int value, unsigned int divisor)
+inline constexpr unsigned int UnsignedCeilDivide(unsigned int value, unsigned int divisor)
 {
     unsigned int divided = value / divisor;
     return (divided + ((value % divisor == 0) ? 0 : 1));
 }
 
+#if defined(__has_builtin)
+#    define ANGLE_HAS_BUILTIN(x) __has_builtin(x)
+#else
+#    define ANGLE_HAS_BUILTIN(x) 0
+#endif
+
 #if defined(_MSC_VER)
 
 #    define ANGLE_ROTL(x, y) _rotl(x, y)
+#    define ANGLE_ROTL64(x, y) _rotl64(x, y)
 #    define ANGLE_ROTR16(x, y) _rotr16(x, y)
+
+#elif defined(__clang__) && ANGLE_HAS_BUILTIN(__builtin_rotateleft32) && \
+    ANGLE_HAS_BUILTIN(__builtin_rotateleft64) && ANGLE_HAS_BUILTIN(__builtin_rotateright16)
+
+#    define ANGLE_ROTL(x, y) __builtin_rotateleft32(x, y)
+#    define ANGLE_ROTL64(x, y) __builtin_rotateleft64(x, y)
+#    define ANGLE_ROTR16(x, y) __builtin_rotateright16(x, y)
 
 #else
 
@@ -1262,12 +1457,18 @@ inline uint32_t RotL(uint32_t x, int8_t r)
     return (x << r) | (x >> (32 - r));
 }
 
+inline uint64_t RotL64(uint64_t x, int8_t r)
+{
+    return (x << r) | (x >> (64 - r));
+}
+
 inline uint16_t RotR16(uint16_t x, int8_t r)
 {
     return (x >> r) | (x << (16 - r));
 }
 
 #    define ANGLE_ROTL(x, y) ::rx::RotL(x, y)
+#    define ANGLE_ROTL64(x, y) ::rx::RotL64(x, y)
 #    define ANGLE_ROTR16(x, y) ::rx::RotR16(x, y)
 
 #endif  // namespace rx

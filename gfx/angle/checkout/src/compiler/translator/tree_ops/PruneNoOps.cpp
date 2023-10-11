@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2002-2015 The ANGLE Project Authors. All rights reserved.
+// Copyright 2002 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -10,6 +10,7 @@
 //        int a;
 //   2. Literal statements: "1.0;". The ESSL output doesn't define a default precision for float,
 //      so float literal statements would end up with no precision which is invalid ESSL.
+//   3. Statements after discard, return, break and continue.
 
 #include "compiler/translator/tree_ops/PruneNoOps.h"
 
@@ -40,28 +41,38 @@ bool IsNoOp(TIntermNode *node)
 class PruneNoOpsTraverser : private TIntermTraverser
 {
   public:
-    static void apply(TIntermBlock *root, TSymbolTable *symbolTable);
+    [[nodiscard]] static bool apply(TCompiler *compiler,
+                                    TIntermBlock *root,
+                                    TSymbolTable *symbolTable);
 
   private:
     PruneNoOpsTraverser(TSymbolTable *symbolTable);
     bool visitDeclaration(Visit, TIntermDeclaration *node) override;
     bool visitBlock(Visit visit, TIntermBlock *node) override;
     bool visitLoop(Visit visit, TIntermLoop *loop) override;
+    bool visitBranch(Visit visit, TIntermBranch *node) override;
+
+    bool mIsBranchVisited = false;
 };
 
-void PruneNoOpsTraverser::apply(TIntermBlock *root, TSymbolTable *symbolTable)
+bool PruneNoOpsTraverser::apply(TCompiler *compiler, TIntermBlock *root, TSymbolTable *symbolTable)
 {
     PruneNoOpsTraverser prune(symbolTable);
     root->traverse(&prune);
-    prune.updateTree();
+    return prune.updateTree(compiler, root);
 }
 
 PruneNoOpsTraverser::PruneNoOpsTraverser(TSymbolTable *symbolTable)
-    : TIntermTraverser(true, false, false, symbolTable)
+    : TIntermTraverser(true, true, true, symbolTable)
 {}
 
-bool PruneNoOpsTraverser::visitDeclaration(Visit, TIntermDeclaration *node)
+bool PruneNoOpsTraverser::visitDeclaration(Visit visit, TIntermDeclaration *node)
 {
+    if (visit != PreVisit)
+    {
+        return true;
+    }
+
     TIntermSequence *sequence = node->getSequence();
     if (sequence->size() >= 1)
     {
@@ -80,8 +91,8 @@ bool PruneNoOpsTraverser::visitDeclaration(Visit, TIntermDeclaration *node)
                 // float a;
                 // This applies also to struct declarations.
                 TIntermSequence emptyReplacement;
-                mMultiReplacements.push_back(
-                    NodeReplaceWithMultipleEntry(node, declaratorSymbol, emptyReplacement));
+                mMultiReplacements.emplace_back(node, declaratorSymbol,
+                                                std::move(emptyReplacement));
             }
             else if (declaratorSymbol->getBasicType() != EbtStruct)
             {
@@ -125,23 +136,52 @@ bool PruneNoOpsTraverser::visitDeclaration(Visit, TIntermDeclaration *node)
 
 bool PruneNoOpsTraverser::visitBlock(Visit visit, TIntermBlock *node)
 {
-    TIntermSequence *statements = node->getSequence();
+    ASSERT(visit == PreVisit);
 
-    for (TIntermNode *statement : *statements)
+    TIntermSequence &statements = *node->getSequence();
+
+    // Visit each statement in the block one by one.  Once a branch is visited (break, continue,
+    // return or discard), drop the rest of the statements.
+    for (size_t statementIndex = 0; statementIndex < statements.size(); ++statementIndex)
     {
-        if (IsNoOp(statement))
+        TIntermNode *statement = statements[statementIndex];
+
+        // If the statement is a switch case label, stop pruning and continue visiting the children.
+        if (statement->getAsCaseNode() != nullptr)
+        {
+            mIsBranchVisited = false;
+        }
+
+        // If a branch is visited, prune the statement.  If the statement is a no-op, also prune it.
+        if (mIsBranchVisited || IsNoOp(statement))
         {
             TIntermSequence emptyReplacement;
-            mMultiReplacements.push_back(
-                NodeReplaceWithMultipleEntry(node, statement, emptyReplacement));
+            mMultiReplacements.emplace_back(node, statement, std::move(emptyReplacement));
+            continue;
         }
+
+        // Visit the statement if not pruned.
+        statement->traverse(this);
     }
 
-    return true;
+    // If the parent is a block and mIsBranchVisited is set, this is a nested block without any
+    // condition (like if, loop or switch), so the rest of the parent block should also be pruned.
+    // Otherwise the parent block should be unaffected.
+    if (mIsBranchVisited && getParentNode()->getAsBlock() == nullptr)
+    {
+        mIsBranchVisited = false;
+    }
+
+    return false;
 }
 
 bool PruneNoOpsTraverser::visitLoop(Visit visit, TIntermLoop *loop)
 {
+    if (visit != PreVisit)
+    {
+        return true;
+    }
+
     TIntermTyped *expr = loop->getExpression();
     if (expr != nullptr && IsNoOp(expr))
     {
@@ -156,11 +196,20 @@ bool PruneNoOpsTraverser::visitLoop(Visit visit, TIntermLoop *loop)
     return true;
 }
 
+bool PruneNoOpsTraverser::visitBranch(Visit visit, TIntermBranch *node)
+{
+    ASSERT(visit == PreVisit);
+
+    mIsBranchVisited = true;
+
+    // Only possible child is the value of a return statement, which has nothing to prune.
+    return false;
+}
 }  // namespace
 
-void PruneNoOps(TIntermBlock *root, TSymbolTable *symbolTable)
+bool PruneNoOps(TCompiler *compiler, TIntermBlock *root, TSymbolTable *symbolTable)
 {
-    PruneNoOpsTraverser::apply(root, symbolTable);
+    return PruneNoOpsTraverser::apply(compiler, root, symbolTable);
 }
 
 }  // namespace sh

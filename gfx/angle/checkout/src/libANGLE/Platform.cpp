@@ -6,7 +6,7 @@
 
 // Platform.cpp: Implementation methods for angle::Platform.
 
-#include <platform/Platform.h>
+#include <platform/PlatformMethods.h>
 
 #include <cstring>
 
@@ -15,12 +15,16 @@
 namespace
 {
 // TODO(jmadill): Make methods owned by egl::Display.
-angle::PlatformMethods g_platformMethods;
+angle::PlatformMethods &PlatformMethods()
+{
+    static angle::PlatformMethods platformMethods;
+    return platformMethods;
+}
 }  // anonymous namespace
 
 angle::PlatformMethods *ANGLEPlatformCurrent()
 {
-    return &g_platformMethods;
+    return &PlatformMethods();
 }
 
 bool ANGLE_APIENTRY ANGLEGetDisplayPlatform(angle::EGLDisplayType display,
@@ -44,6 +48,13 @@ bool ANGLE_APIENTRY ANGLEGetDisplayPlatform(angle::EGLDisplayType display,
     {
         const char *expectedName = angle::g_PlatformMethodNames[nameIndex];
         const char *actualName   = methodNames[nameIndex];
+
+        // Skip deprecated methods.  The names of these methods start with |placeholder|.
+        constexpr char kPlaceholder[] = "placeholder";
+        if (strncmp(expectedName, kPlaceholder, sizeof(kPlaceholder) - 1) == 0)
+        {
+            continue;
+        }
         if (strcmp(expectedName, actualName) != 0)
         {
             ERR() << "Invalid platform method name: " << actualName << ", expected " << expectedName
@@ -53,13 +64,13 @@ bool ANGLE_APIENTRY ANGLEGetDisplayPlatform(angle::EGLDisplayType display,
     }
 
     // TODO(jmadill): Store platform methods in display.
-    g_platformMethods.context = context;
-    *platformMethodsOut       = &g_platformMethods;
+    PlatformMethods().context = context;
+    *platformMethodsOut       = &PlatformMethods();
     return true;
 }
 
 void ANGLE_APIENTRY ANGLEResetDisplayPlatform(angle::EGLDisplayType display)
 {
     // TODO(jmadill): Store platform methods in display.
-    g_platformMethods = angle::PlatformMethods();
+    PlatformMethods() = angle::PlatformMethods();
 }

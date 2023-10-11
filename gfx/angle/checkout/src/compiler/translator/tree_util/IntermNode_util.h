@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2017 The ANGLE Project Authors. All rights reserved.
+// Copyright 2017 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -10,6 +10,7 @@
 #define COMPILER_TRANSLATOR_INTERMNODEUTIL_H_
 
 #include "compiler/translator/IntermNode.h"
+#include "compiler/translator/tree_util/FindFunction.h"
 
 namespace sh
 {
@@ -22,7 +23,15 @@ TIntermFunctionDefinition *CreateInternalFunctionDefinitionNode(const TFunction 
                                                                 TIntermBlock *functionBody);
 
 TIntermTyped *CreateZeroNode(const TType &type);
+TIntermConstantUnion *CreateFloatNode(float value, TPrecision precision);
+TIntermConstantUnion *CreateVecNode(const float values[],
+                                    unsigned int vecSize,
+                                    TPrecision precision);
+TIntermConstantUnion *CreateUVecNode(const unsigned int values[],
+                                     unsigned int vecSize,
+                                     TPrecision precision);
 TIntermConstantUnion *CreateIndexNode(int index);
+TIntermConstantUnion *CreateUIntNode(unsigned int value);
 TIntermConstantUnion *CreateBoolNode(bool value);
 
 TVariable *CreateTempVariable(TSymbolTable *symbolTable, const TType *type);
@@ -42,6 +51,24 @@ TVariable *DeclareTempVariable(TSymbolTable *symbolTable,
                                TIntermTyped *initializer,
                                TQualifier qualifier,
                                TIntermDeclaration **declarationOut);
+std::pair<const TVariable *, const TVariable *> DeclareStructure(
+    TIntermBlock *root,
+    TSymbolTable *symbolTable,
+    TFieldList *fieldList,
+    TQualifier qualifier,
+    const TMemoryQualifier &memoryQualifier,
+    uint32_t arraySize,
+    const ImmutableString &structTypeName,
+    const ImmutableString *structInstanceName);
+const TVariable *DeclareInterfaceBlock(TIntermBlock *root,
+                                       TSymbolTable *symbolTable,
+                                       TFieldList *fieldList,
+                                       TQualifier qualifier,
+                                       const TLayoutQualifier &layoutQualifier,
+                                       const TMemoryQualifier &memoryQualifier,
+                                       uint32_t arraySize,
+                                       const ImmutableString &blockTypeName,
+                                       const ImmutableString &blockVariableName);
 
 // If the input node is nullptr, return nullptr.
 // If the input node is a block node, return it.
@@ -53,7 +80,7 @@ TIntermSymbol *ReferenceGlobalVariable(const ImmutableString &name,
                                        const TSymbolTable &symbolTable);
 
 // Note: this can't access desktop GLSL built-ins. Those can only be accessed directly through
-// BuiltIn_autogen.h.
+// BuiltIn.h.
 TIntermSymbol *ReferenceBuiltInVariable(const ImmutableString &name,
                                         const TSymbolTable &symbolTable,
                                         int shaderVersion);
@@ -62,6 +89,39 @@ TIntermTyped *CreateBuiltInFunctionCallNode(const char *name,
                                             TIntermSequence *arguments,
                                             const TSymbolTable &symbolTable,
                                             int shaderVersion);
+TIntermTyped *CreateBuiltInFunctionCallNode(const char *name,
+                                            const std::initializer_list<TIntermNode *> &arguments,
+                                            const TSymbolTable &symbolTable,
+                                            int shaderVersion);
+TIntermTyped *CreateBuiltInUnaryFunctionCallNode(const char *name,
+                                                 TIntermTyped *argument,
+                                                 const TSymbolTable &symbolTable,
+                                                 int shaderVersion);
+
+int GetESSLOrGLSLVersion(ShShaderSpec spec, int esslVersion, int glslVersion);
+
+inline void GetSwizzleIndex(TVector<int> *indexOut) {}
+
+template <typename T, typename... ArgsT>
+void GetSwizzleIndex(TVector<int> *indexOut, T arg, ArgsT... args)
+{
+    indexOut->push_back(arg);
+    GetSwizzleIndex(indexOut, args...);
+}
+
+template <typename... ArgsT>
+TIntermSwizzle *CreateSwizzle(TIntermTyped *reference, ArgsT... args)
+{
+    TVector<int> swizzleIndex;
+    GetSwizzleIndex(&swizzleIndex, args...);
+    return new TIntermSwizzle(reference, swizzleIndex);
+}
+
+// Returns true if a block ends in a branch (break, continue, return, etc).  This is only correct
+// after PruneNoOps, because it expects empty blocks after a branch to have been already pruned,
+// i.e. a block can only end in a branch if its last statement is a branch or is a block ending in
+// branch.
+bool EndsInBranch(TIntermBlock *block);
 
 }  // namespace sh
 

@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2017 The ANGLE Project Authors. All rights reserved.
+// Copyright 2017 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -17,11 +17,6 @@ namespace sh
 namespace
 {
 constexpr const ImmutableString kHashedNamePrefix("webgl_");
-
-// Can't prefix with just _ because then we might introduce a double underscore, which is not safe
-// in GLSL (ESSL 3.00.6 section 3.8: All identifiers containing a double underscore are reserved for
-// use by the underlying implementation). u is short for user-defined.
-constexpr const ImmutableString kUnhashedNamePrefix("_u");
 
 ImmutableString HashName(const ImmutableString &name, ShHashFunction64 hashFunction)
 {
@@ -41,12 +36,30 @@ ImmutableString HashName(const ImmutableString &name, ShHashFunction64 hashFunct
     return hashedName;
 }
 
+void AddToNameMapIfNotMapped(const ImmutableString &name,
+                             const ImmutableString &hashedName,
+                             NameMap *nameMap)
+{
+    if (nameMap)
+    {
+        NameMap::const_iterator it = nameMap->find(name.data());
+        if (it != nameMap->end())
+        {
+            // (How bout returning?)
+            return;
+        }
+        (*nameMap)[name.data()] = hashedName.data();
+    }
+}
+
 }  // anonymous namespace
 
 ImmutableString HashName(const ImmutableString &name,
                          ShHashFunction64 hashFunction,
                          NameMap *nameMap)
 {
+    const ImmutableString kUnhashedNamePrefix(kUserDefinedNamePrefix);
+
     if (hashFunction == nullptr)
     {
         if (name.length() + kUnhashedNamePrefix.length() > kESSLMaxIdentifierLength)
@@ -58,22 +71,14 @@ ImmutableString HashName(const ImmutableString &name,
         }
         ImmutableStringBuilder prefixedName(kUnhashedNamePrefix.length() + name.length());
         prefixedName << kUnhashedNamePrefix << name;
-        return prefixedName;
+        ImmutableString res = prefixedName;
+        AddToNameMapIfNotMapped(name, res, nameMap);
+        return res;
     }
-    if (nameMap)
-    {
-        NameMap::const_iterator it = nameMap->find(name.data());
-        if (it != nameMap->end())
-        {
-            // TODO(oetuaho): Would be nice if we didn't need to allocate a string here.
-            return ImmutableString(it->second);
-        }
-    }
+
+    // Has a hash function
     ImmutableString hashedName = HashName(name, hashFunction);
-    if (nameMap)
-    {
-        (*nameMap)[name.data()] = hashedName.data();
-    }
+    AddToNameMapIfNotMapped(name, hashedName, nameMap);
     return hashedName;
 }
 

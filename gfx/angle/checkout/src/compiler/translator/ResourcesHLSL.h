@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2014 The ANGLE Project Authors. All rights reserved.
+// Copyright 2014 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -24,7 +24,7 @@ class ResourcesHLSL : angle::NonCopyable
   public:
     ResourcesHLSL(StructureHLSL *structureHLSL,
                   ShShaderOutput outputType,
-                  const std::vector<Uniform> &uniforms,
+                  const std::vector<ShaderVariable> &uniforms,
                   unsigned int firstUniformRegister);
 
     void reserveUniformRegisters(unsigned int registerCount);
@@ -38,7 +38,11 @@ class ResourcesHLSL : angle::NonCopyable
     void samplerMetadataUniforms(TInfoSinkBase &out, unsigned int regIndex);
     unsigned int getSamplerCount() const { return mSamplerCount; }
     void imageMetadataUniforms(TInfoSinkBase &out, unsigned int regIndex);
-    TString uniformBlocksHeader(const ReferencedInterfaceBlocks &referencedInterfaceBlocks);
+    TString uniformBlocksHeader(
+        const ReferencedInterfaceBlocks &referencedInterfaceBlocks,
+        const std::map<int, const TInterfaceBlock *> &uniformBlockOptimizedMap);
+    void allocateShaderStorageBlockRegisters(
+        const ReferencedInterfaceBlocks &referencedInterfaceBlocks);
     TString shaderStorageBlocksHeader(const ReferencedInterfaceBlocks &referencedInterfaceBlocks);
 
     // Used for direct index references
@@ -54,6 +58,12 @@ class ResourcesHLSL : angle::NonCopyable
     {
         return mUniformBlockRegisterMap;
     }
+
+    const std::map<std::string, bool> &getUniformBlockUseStructuredBufferMap() const
+    {
+        return mUniformBlockUseStructuredBufferMap;
+    }
+
     const std::map<std::string, unsigned int> &getUniformRegisterMap() const
     {
         return mUniformRegisterMap;
@@ -61,12 +71,17 @@ class ResourcesHLSL : angle::NonCopyable
 
     unsigned int getReadonlyImage2DRegisterIndex() const { return mReadonlyImage2DRegisterIndex; }
     unsigned int getImage2DRegisterIndex() const { return mImage2DRegisterIndex; }
+    bool hasImages() const { return mReadonlyImageCount > 0 || mImageCount > 0; }
 
   private:
     TString uniformBlockString(const TInterfaceBlock &interfaceBlock,
                                const TVariable *instanceVariable,
                                unsigned int registerIndex,
                                unsigned int arrayIndex);
+    TString uniformBlockWithOneLargeArrayMemberString(const TInterfaceBlock &interfaceBlock,
+                                                      const TVariable *instanceVariable,
+                                                      unsigned int registerIndex,
+                                                      unsigned int arrayIndex);
 
     TString shaderStorageBlockString(const TInterfaceBlock &interfaceBlock,
                                      const TVariable *instanceVariable,
@@ -75,7 +90,7 @@ class ResourcesHLSL : angle::NonCopyable
     TString uniformBlockMembersString(const TInterfaceBlock &interfaceBlock,
                                       TLayoutBlockStorage blockStorage);
     TString uniformBlockStructString(const TInterfaceBlock &interfaceBlock);
-    const Uniform *findUniformByName(const ImmutableString &name) const;
+    const ShaderVariable *findUniformByName(const ImmutableString &name) const;
 
     void outputHLSL4_0_FL9_3Sampler(TInfoSinkBase &out,
                                     const TType &type,
@@ -119,18 +134,19 @@ class ResourcesHLSL : angle::NonCopyable
 
     unsigned int mUniformRegister;
     unsigned int mUniformBlockRegister;
-    unsigned int mTextureRegister;
+    unsigned int mSRVRegister;
     unsigned int mUAVRegister;
     unsigned int mSamplerCount;
-    unsigned int mReadonlyImageCount;
-    unsigned int mImageCount;
+    unsigned int mReadonlyImageCount = 0;
+    unsigned int mImageCount         = 0;
     StructureHLSL *mStructureHLSL;
     ShShaderOutput mOutputType;
 
-    const std::vector<Uniform> &mUniforms;
+    const std::vector<ShaderVariable> &mUniforms;
     std::map<std::string, unsigned int> mUniformBlockRegisterMap;
     std::map<std::string, unsigned int> mShaderStorageBlockRegisterMap;
     std::map<std::string, unsigned int> mUniformRegisterMap;
+    std::map<std::string, bool> mUniformBlockUseStructuredBufferMap;
     unsigned int mReadonlyImage2DRegisterIndex;
     unsigned int mImage2DRegisterIndex;
 };

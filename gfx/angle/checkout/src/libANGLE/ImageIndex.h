@@ -40,16 +40,19 @@ class ImageIndex
     // map.
     TextureTarget getTarget() const;
 
+    TextureTarget getTargetOrFirstCubeFace() const;
+
     bool isLayered() const;
     bool isEntireLevelCubeMap() const;
 
+    static ImageIndex MakeBuffer();
     static ImageIndex Make2D(GLint levelIndex);
     static ImageIndex MakeRectangle(GLint levelIndex);
     static ImageIndex MakeCubeMapFace(TextureTarget target, GLint levelIndex);
     static ImageIndex Make2DArray(GLint levelIndex, GLint layerIndex = kEntireLevel);
     static ImageIndex Make2DArrayRange(GLint levelIndex, GLint layerIndex, GLint layerCount);
     static ImageIndex Make3D(GLint levelIndex, GLint layerIndex = kEntireLevel);
-    static ImageIndex MakeFromTarget(TextureTarget target, GLint levelIndex);
+    static ImageIndex MakeFromTarget(TextureTarget target, GLint levelIndex, GLint depth = 0);
     static ImageIndex MakeFromType(TextureType type,
                                    GLint levelIndex,
                                    GLint layerIndex = kEntireLevel,
@@ -90,6 +93,7 @@ class ImageIndexIterator
   public:
     ImageIndexIterator(const ImageIndexIterator &other);
 
+    static ImageIndexIterator MakeBuffer();
     static ImageIndexIterator Make2D(GLint minMip, GLint maxMip);
     static ImageIndexIterator MakeRectangle(GLint minMip, GLint maxMip);
     static ImageIndexIterator MakeCube(GLint minMip, GLint maxMip);
@@ -121,6 +125,9 @@ class ImageIndexIterator
 
     ImageIndex mCurrentIndex;
 };
+
+TextureTarget TextureTypeToTarget(TextureType type, GLint layerIndex);
+
 }  // namespace gl
 
 #endif  // LIBANGLE_IMAGE_INDEX_H_
