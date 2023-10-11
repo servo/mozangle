@@ -7,7 +7,7 @@ ANGLE = path.join(REPO, "gfx", "angle")
 
 def run():
     data = {}
-    for lib in ["translator", "libANGLE", "libEGL", "libGLESv2"]:
+    for lib in ["translator", "libEGL", "libGLESv2"]:
         data[lib] = {
             "DEFINES": {},
             "LOCAL_INCLUDES": [],
@@ -18,16 +18,6 @@ def run():
         directory = path.join(ANGLE, "targets", lib)
         parse_lib(directory, data[lib])
         parse_lib(ANGLE, data[lib], ".common")
-
-    # Remove duplicate source files from libEGL and libGLESv2 since
-    # they are included in libANGLE and will be statically linked in.
-    def remove_duplicates_source_files(from_data: list[str]):
-        from_data['SOURCES'] = [
-            file for file in from_data['SOURCES']
-                if file not in data['libANGLE']['SOURCES']]
-
-    remove_duplicates_source_files(data['libEGL'])
-    remove_duplicates_source_files(data['libGLESv2'])
 
     with open(path.join(REPO, "build_data.rs"), "wb") as f:
         write(data, f)
@@ -40,12 +30,16 @@ def parse_lib(directory, data, suffix=""):
         "GeckoSharedLibrary": noop,
         "AllowCompilerWarnings": noop,
         "SRCDIR": directory,
-        "CXXFLAGS": "",
+        "CXXFLAGS": list(),
         "DIRS": [],
         "CONFIG": {
             "SSE2_FLAGS": "",
             "OS_ARCH": "neither",
-            "INTEL_ARCHITECTURE": "Yes",
+            "INTEL_ARCHITECTURE": "true",
+            "CC_TYPE": "gcc",
+            "MOZ_X11_CFLAGS": "",
+            "MOZ_WIDGET_TOOLKIT": "",
+            "MOZ_WIDGET_GTK": "",
         },
     }
     env.update(data)
@@ -75,7 +69,6 @@ def write(data, f):
         b"\n"
     )
     write_lib(b"TRANSLATOR", data["translator"], f)
-    write_lib(b"ANGLE", data["libANGLE"], f)
     write_lib(b"EGL", data["libEGL"], f)
     write_lib(b"GLESv2", data["libGLESv2"], f)
 
