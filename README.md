@@ -1,7 +1,7 @@
 mozangle
 ========
 
-Mozilla’s fork of Google ANGLE, repackaged as a Rust crate.
+Mozilla's fork of Google ANGLE, repackaged as a Rust crate.
 
 * [ANGLE] is an implementation of OpenGL ES. Its official build system is `gn`, from Chromium's
   [depot_tools].
@@ -35,7 +35,7 @@ ANGLE supports more platforms, this crate only configures the Direct3D 11 render
 
 ```toml
 [dependencies]
-mozangle = { version = "0.3", features = ["egl"] }
+mozangle = { version = "0.4", features = ["egl"] }
 ```
 
 
