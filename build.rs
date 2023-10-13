@@ -144,7 +144,7 @@ fn build_egl(target: &str) {
 
 fn build_angle(target: &String, egl: bool) {
     let data = if egl {
-        build_data::ANGLE
+        build_data::EGL
     } else {
         build_data::TRANSLATOR
     };
@@ -153,7 +153,7 @@ fn build_angle(target: &String, egl: bool) {
     env::set_current_dir(repo).unwrap();
 
     // common clang args
-    let mut clang_args = vec![String::from("-std=c++14")];
+    let mut clang_args = vec![];
 
     for &(k, v) in data.defines {
         if let Some(v) = v {
@@ -211,6 +211,7 @@ fn build_angle(target: &String, egl: bool) {
     build
         .file("src/shaders/glslang-c.cpp")
         .cpp(true)
+        .std("c++17")
         .warnings(false)
         .flag_if_supported("/wd4100")
         .flag_if_supported("/wd4127")
@@ -240,7 +241,8 @@ fn build_angle(target: &String, egl: bool) {
         .clang_args(clang_args)
         // ensure cxx
         .clang_arg("-x")
-        .clang_arg("c++");
+        .clang_arg("c++")
+        .clang_arg("-std=c++17");
 
     if target.contains("x86_64") || target.contains("i686") {
         builder = builder.clang_arg("-msse2")

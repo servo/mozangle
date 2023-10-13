@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::default;
 use std::ffi::CStr;
 use std::ffi::CString;
-use std::mem::{self, MaybeUninit};
+use std::mem::MaybeUninit;
 use std::os::raw::c_char;
 use std::os::raw::c_void;
 use std::slice;
@@ -42,7 +42,7 @@ pub fn finalize() -> Result<(), &'static str> {
 }
 
 pub trait AsAngleEnum {
-    fn as_angle_enum(&self) -> i32;
+    fn as_angle_enum(&self) -> u32;
 }
 
 pub enum ShaderSpec {
@@ -55,14 +55,14 @@ pub enum ShaderSpec {
 
 impl AsAngleEnum for ShaderSpec {
     #[inline]
-    fn as_angle_enum(&self) -> i32 {
+    fn as_angle_enum(&self) -> u32 {
         (match *self {
             ShaderSpec::Gles2 => SH_GLES2_SPEC,
             ShaderSpec::WebGL => SH_WEBGL_SPEC,
             ShaderSpec::Gles3 => SH_GLES3_SPEC,
             ShaderSpec::WebGL2 => SH_WEBGL2_SPEC,
             ShaderSpec::WebGL3 => SH_WEBGL3_SPEC,
-        }) as i32
+        }) as u32
     }
 }
 
@@ -85,7 +85,7 @@ pub enum Output {
 
 impl AsAngleEnum for Output {
     #[inline]
-    fn as_angle_enum(&self) -> i32 {
+    fn as_angle_enum(&self) -> u32 {
         (match *self {
             Output::Essl => SH_ESSL_OUTPUT,
             Output::Glsl => SH_GLSL_COMPATIBILITY_OUTPUT,
@@ -101,7 +101,7 @@ impl AsAngleEnum for Output {
             Output::Glsl430Core => SH_GLSL_430_CORE_OUTPUT,
             Output::Glsl440Core => SH_GLSL_440_CORE_OUTPUT,
             Output::Glsl450Core => SH_GLSL_450_CORE_OUTPUT,
-        }) as i32
+        }) as u32
     }
 }
 
@@ -189,7 +189,7 @@ impl ShaderValidator {
                 self.handle,
                 cptrs.as_ptr() as *const *const c_char,
                 cstrings.len(),
-                options,
+                &options as *const _,
             )
         } == 0
         {
@@ -213,17 +213,22 @@ impl ShaderValidator {
     }
 
     pub fn compile_and_translate(&self, strings: &[&str]) -> Result<String, &'static str> {
-        let options = SH_VALIDATE | SH_OBJECT_CODE |
-                      SH_VARIABLES | // For uniform_name_map()
-                      SH_EMULATE_ABS_INT_FUNCTION | // To workaround drivers
-                      SH_EMULATE_ISNAN_FLOAT_FUNCTION | // To workaround drivers
-                      SH_EMULATE_ATAN2_FLOAT_FUNCTION | // To workaround drivers
-                      SH_CLAMP_INDIRECT_ARRAY_BOUNDS |
-                      SH_INIT_GL_POSITION |
-                      SH_ENFORCE_PACKING_RESTRICTIONS |
-                      SH_LIMIT_EXPRESSION_COMPLEXITY |
-                      SH_LIMIT_CALL_STACK_DEPTH;
-
+        // TODO: make this selection smarter
+        let options = unsafe {
+            let mut options = ShCompileOptions::new();
+            options.set_validateLoopIndexing(1); // SH_VALIDATE
+            options.set_objectCode(1);
+            options.set_variables(1); // For uniform_name_map()
+            options.set_emulateAbsIntFunction(1); // To workaround drivers
+            options.set_emulateIsnanFloatFunction(1); // To workaround drivers
+            options.set_emulateAtan2FloatFunction(1); // To workaround drivers
+            options.set_clampIndirectArrayBounds(1);
+            options.set_initGLPosition(1);
+            options.set_enforcePackingRestrictions(1);
+            options.set_limitExpressionComplexity(1);
+            options.set_limitCallStackDepth(1);
+            options
+        };
         // Todo(Mortimer): Add SH_TIMING_RESTRICTIONS to options when the implementations gets better
         // Right now SH_TIMING_RESTRICTIONS is experimental
         // and doesn't support user callable functions in shaders
@@ -277,7 +282,9 @@ impl ShaderValidator {
             error: None,
         };
         let closure_ptr: *mut Closure = &mut closure;
-        unsafe { GLSLangIterUniformNameMapping(self.handle, Some(each_c), closure_ptr as *mut c_void) }
+        unsafe {
+            GLSLangIterUniformNameMapping(self.handle, Some(each_c), closure_ptr as *mut c_void)
+        }
         if let Some(err) = closure.error {
             panic!("Non-UTF-8 uniform name in ANGLE shader: {}", err)
         }
