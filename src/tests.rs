@@ -47,6 +47,7 @@ void main() {
     assert!(compiler.compile_and_translate(&[source]).is_ok());
 
     let map = compiler.uniform_name_map();
+    println!("{:?}", map);
     let keys = map.keys().collect::<Vec<_>>();
     assert_eq!(keys, &["uSampler"], "name hashing map: {:?}", map)
 }
@@ -56,9 +57,10 @@ fn test_translation() {
     const SHADER: &'static str = "void main() {
 gl_FragColor = vec4(0, 1, 0, 1);  // green
 }";
-    const EXPECTED: &'static str = "void main(){
-(gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0));
-}\n";
+    const EXPECTED: &'static str = r#"void main(){
+  (gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0));
+}
+"#;
     const FRAGMENT_SHADER: u32 = 0x8B30;
 
     init();
@@ -79,9 +81,10 @@ fn test_translation_essl() {
     const SHADER: &'static str = "void main() {
 gl_FragColor = vec4(0, 1, 0, 1);  // green
 }";
-    const EXPECTED: &'static str = "void main(){
-(gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0));
-}\n";
+    const EXPECTED: &'static str = r#"void main(){
+  (gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0));
+}
+"#;
     const FRAGMENT_SHADER: u32 = 0x8B30;
 
     init();
