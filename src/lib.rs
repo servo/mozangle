@@ -1,6 +1,7 @@
 #[macro_use]
 extern crate lazy_static;
 // This extern crates are needed for linking
+#[cfg(feature = "egl")]
 extern crate libz_sys;
 #[cfg(test)]
 extern crate dlopen;

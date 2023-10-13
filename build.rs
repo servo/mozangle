@@ -188,10 +188,12 @@ fn build_angle(target: &String, egl: bool) {
         clang_args.push(fixup_path(file));
     }
 
-    // add zlib from libz-sys to include path
-    if let Ok(zlib_include_dir) = env::var("DEP_Z_INCLUDE") {
-        clang_args.push(String::from("-I"));
-        clang_args.push(zlib_include_dir.replace("\\", "/"));
+    if egl {
+        // add zlib from libz-sys to include path
+        if let Ok(zlib_include_dir) = env::var("DEP_Z_INCLUDE") {
+            clang_args.push(String::from("-I"));
+            clang_args.push(zlib_include_dir.replace("\\", "/"));
+        }
     }
 
     // Change to one of the directory that contains moz.build

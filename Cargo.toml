@@ -8,7 +8,7 @@ repository = "https://github.com/servo/mozangle"
 readme = "README.md"
 
 [dependencies]
-libz-sys = "1.1"
+libz-sys = { version = "1.1", optional = true }
 lazy_static = "1.0"
 
 [dev-dependencies]
@@ -24,5 +24,5 @@ gl_generator = { version = "0.14", optional = true }
 walkdir = "2"
 
 [features]
-egl = ["gl_generator"] # Only does anything on Windows
-build_dlls = ["egl"]
+egl = ["gl_generator", "libz-sys"] # Only does anything on Windows
+build_dlls = ["egl", "libz-sys"]
