@@ -45,7 +45,7 @@ fn main() {
         build_windows_dll(
             &build_data::EGL,
             "libEGL",
-            "gfx/angle/checkout/src/libEGL/libEGL.def",
+            "gfx/angle/checkout/src/libEGL/libEGL_autogen.def",
         );
         build_windows_dll(
             &build_data::GLESv2,
@@ -57,10 +57,20 @@ fn main() {
 
 #[cfg(feature = "build_dlls")]
 fn build_windows_dll(data: &build_data::Data, dll_name: &str, def_file: &str) {
+    println!("build_windows_dll: {dll_name}");
     let mut build = cc::Build::new();
+    build.cpp(true);
+    build.std("c++17");
     for &(k, v) in data.defines {
         build.define(k, v);
     }
+    // add zlib from libz-sys to include path
+    let zlib_link_arg = if let Ok(zlib_include_dir) = env::var("DEP_Z_INCLUDE") {
+        build.include(zlib_include_dir.replace("\\", "/"));
+        PathBuf::from(zlib_include_dir).parent().unwrap().join("lib").join("z.lib").as_path().display().to_string()
+    } else {
+        String::from("z.lib")
+    };
     build.define("ANGLE_USE_EGL_LOADER", None);
     build
         .flag_if_supported("/wd4100")
@@ -81,6 +91,8 @@ fn build_windows_dll(data: &build_data::Data, dll_name: &str, def_file: &str) {
     for lib in data.os_libs {
         cmd.arg(&format!("{}.lib", lib));
     }
+    // also need to link zlib
+    cmd.arg(&zlib_link_arg);
 
     for file in data.sources {
         cmd.arg(fixup_path(file));
@@ -106,8 +118,10 @@ fn build_windows_dll(data: &build_data::Data, dll_name: &str, def_file: &str) {
 
 #[cfg(feature = "egl")]
 fn build_egl(target: &str) {
+    println!("build_egl");
     let mut build = cc::Build::new();
-
+    build.cpp(true);
+    build.std("c++17");
     let data = build_data::EGL;
     for &(k, v) in data.defines {
         build.define(k, v);
@@ -123,6 +137,11 @@ fn build_egl(target: &str) {
 
     for file in data.sources {
         build.file(fixup_path(file));
+    }
+
+    // add zlib from libz-sys to include path
+    if let Ok(zlib_include_dir) = env::var("DEP_Z_INCLUDE") {
+        build.include(zlib_include_dir.replace("\\", "/"));
     }
 
     if target.contains("x86_64") || target.contains("i686") {
@@ -143,6 +162,7 @@ fn build_egl(target: &str) {
 }
 
 fn build_angle(target: &String, egl: bool) {
+    println!("build_angle");
     let data = if egl {
         build_data::EGL
     } else {
@@ -166,6 +186,12 @@ fn build_angle(target: &String, egl: bool) {
     for file in data.includes {
         clang_args.push(String::from("-I"));
         clang_args.push(fixup_path(file));
+    }
+
+    // add zlib from libz-sys to include path
+    if let Ok(zlib_include_dir) = env::var("DEP_Z_INCLUDE") {
+        clang_args.push(String::from("-I"));
+        clang_args.push(zlib_include_dir.replace("\\", "/"));
     }
 
     // Change to one of the directory that contains moz.build
@@ -193,7 +219,10 @@ fn build_angle(target: &String, egl: bool) {
         ),
         (
             "windows",
-            &["gfx/angle/checkout/src/common/system_utils_win.cpp"][..],
+            &[
+                "gfx/angle/checkout/src/common/system_utils_win.cpp",
+                "gfx/angle/checkout/src/common/system_utils_win32.cpp"
+            ][..],
         ),
     ] {
         if target.contains(os) {
@@ -258,7 +287,6 @@ fn build_angle(target: &String, egl: bool) {
         .write_to_file(out_dir.join("angle_bindings.rs"))
         .expect("Should write bindings to file");
 
-
     for lib in data.os_libs {
         println!("cargo:rustc-link-lib={}", lib);
     }
@@ -296,6 +324,7 @@ fn fixup_path(path: &str) -> String {
 
 #[cfg(feature = "egl")]
 fn generate_bindings() {
+    println!("generate_bindings");
     use gl_generator::{Api, Fallbacks, Profile, Registry};
     use std::fs::File;
 
