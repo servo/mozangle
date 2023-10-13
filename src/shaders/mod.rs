@@ -124,6 +124,29 @@ impl BuiltInResources {
     }
 }
 
+pub type CompileOptions = ShCompileOptions;
+
+impl CompileOptions {
+    pub fn mozangle() -> Self {
+        let mut options = unsafe { CompileOptions::new() };
+        options.set_validateLoopIndexing(1); // SH_VALIDATE
+        options.set_objectCode(1);
+        options.set_variables(1); // For uniform_name_map()
+        options.set_emulateAbsIntFunction(1); // To workaround drivers
+        options.set_emulateIsnanFloatFunction(1); // To workaround drivers
+        options.set_emulateAtan2FloatFunction(1); // To workaround drivers
+        options.set_clampIndirectArrayBounds(1);
+        options.set_initGLPosition(1);
+        options.set_enforcePackingRestrictions(1);
+        options.set_limitExpressionComplexity(1);
+        options.set_limitCallStackDepth(1);
+        // Todo(Mortimer): Add SH_TIMING_RESTRICTIONS to options when the implementations gets better
+        // Right now SH_TIMING_RESTRICTIONS is experimental
+        // and doesn't support user callable functions in shaders
+        options
+    }
+}
+
 pub struct ShaderValidator {
     handle: ShHandle,
 }
@@ -213,26 +236,7 @@ impl ShaderValidator {
     }
 
     pub fn compile_and_translate(&self, strings: &[&str]) -> Result<String, &'static str> {
-        // TODO: make this selection smarter
-        let options = unsafe {
-            let mut options = ShCompileOptions::new();
-            options.set_validateLoopIndexing(1); // SH_VALIDATE
-            options.set_objectCode(1);
-            options.set_variables(1); // For uniform_name_map()
-            options.set_emulateAbsIntFunction(1); // To workaround drivers
-            options.set_emulateIsnanFloatFunction(1); // To workaround drivers
-            options.set_emulateAtan2FloatFunction(1); // To workaround drivers
-            options.set_clampIndirectArrayBounds(1);
-            options.set_initGLPosition(1);
-            options.set_enforcePackingRestrictions(1);
-            options.set_limitExpressionComplexity(1);
-            options.set_limitCallStackDepth(1);
-            options
-        };
-        // Todo(Mortimer): Add SH_TIMING_RESTRICTIONS to options when the implementations gets better
-        // Right now SH_TIMING_RESTRICTIONS is experimental
-        // and doesn't support user callable functions in shaders
-
+        let options = CompileOptions::mozangle();
         self.compile(strings, options)?;
         Ok(self.object_code())
     }
