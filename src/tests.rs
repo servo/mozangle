@@ -12,7 +12,7 @@ fn test_linkage() {
     init();
 }
 
-#[cfg(all(windows, feature = "egl"))]
+#[cfg(all(windows, feature = "build_dlls"))]
 #[test]
 fn test_egl_dll_linkage() {
     use dlopen::symbor::Library;
