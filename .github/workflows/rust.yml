@@ -17,7 +17,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ["windows-latest", "ubuntu-latest", "macos-latest"]
+        os: ["ubuntu-latest", "macos-latest"]
+        cargo-options: [""]
+        include:
+          - os: "windows-latest"
+            cargo-options: '--features "egl"'
+          - os: "windows-latest"
+            cargo-options: '--features "build_dlls"'
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -26,12 +32,7 @@ jobs:
         if: contains(matrix.os, 'ubuntu')
         run: echo "LIBCLANG_PATH=/usr/lib/llvm-14/lib" >> $GITHUB_ENV
       - name: Run tests
-        if: contains(matrix.os, 'windows')
-        run: cargo test --verbose --features "egl build_dlls"
-      - name: Run test (POSIX)
-        if: ${{ !contains(matrix.os, 'windows') }}
-        run: |
-          cargo test --verbose
+        run: cargo test --verbose ${{ matrix.cargo-options }}
 
   linux-cross-compile:
     name: linux (${{ matrix.target }})

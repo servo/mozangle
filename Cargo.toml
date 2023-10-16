@@ -23,5 +23,5 @@ gl_generator = { version = "0.14", optional = true }
 walkdir = "2"
 
 [features]
-egl = ["gl_generator"]               # Only does anything on Windows
-build_dlls = ["egl", "gl_generator"]
+egl = ["gl_generator"] # Only does anything on Windows
+build_dlls = ["egl"]
