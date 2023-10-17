@@ -1,23 +1,23 @@
 #[macro_use]
 extern crate lazy_static;
 // This extern crates are needed for linking
-#[cfg(feature = "egl")]
-extern crate libz_sys;
 #[cfg(test)]
 extern crate dlopen;
+#[cfg(feature = "egl")]
+extern crate libz_sys;
 
 pub mod shaders;
 #[cfg(test)]
 mod tests;
 
-#[cfg(all(windows, feature = "egl"))]
+#[cfg(feature = "egl")]
 pub mod gles {
     pub mod ffi {
         include!(concat!(env!("OUT_DIR"), "/gles_bindings.rs"));
     }
 }
 
-#[cfg(all(windows, feature = "egl"))]
+#[cfg(feature = "egl")]
 pub mod egl {
     use std::ffi::CString;
     use std::os::raw::c_void;

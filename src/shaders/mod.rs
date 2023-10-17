@@ -3,7 +3,7 @@
 #[allow(non_camel_case_types)]
 #[allow(non_snake_case)]
 pub mod ffi {
-    include!(concat!(env!("OUT_DIR"), "/angle_bindings.rs"));
+    include!(concat!(env!("OUT_DIR"), "/glslang_glue_bindings.rs"));
 }
 
 use self::ffi::ShShaderOutput::*;
