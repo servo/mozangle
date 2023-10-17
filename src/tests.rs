@@ -12,7 +12,7 @@ fn test_linkage() {
     init();
 }
 
-#[cfg(all(windows, feature = "build_dlls"))]
+#[cfg(feature = "build_dlls")]
 #[test]
 fn test_egl_dll_linkage() {
     use dlopen::symbor::Library;
@@ -22,7 +22,7 @@ fn test_egl_dll_linkage() {
     assert_eq!(unsafe { GetError() }, ffi::SUCCESS);
 }
 
-#[cfg(all(windows, feature = "egl"))]
+#[cfg(feature = "egl")]
 #[test]
 fn test_egl_linkage() {
     use egl::ffi;
