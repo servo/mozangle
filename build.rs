@@ -244,7 +244,11 @@ fn build_lib(libs: &mut HashSet<Libs>, target: &String, lib: Libs) {
     // Enable multiprocessing for faster builds.
     build.flag_if_supported("/MP");
 
-    //build.link_lib_modifier("-whole-archive");
+    // we want all symbols as they are for consumers
+    if matches!(lib, Libs::EGL | Libs::GLESv2) {
+        build.link_lib_modifier("-bundle");
+        build.link_lib_modifier("+whole-archive");
+    }
 
     build.compile(data.lib);
 
