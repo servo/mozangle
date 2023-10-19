@@ -129,7 +129,6 @@ pub type CompileOptions = ShCompileOptions;
 impl CompileOptions {
     pub fn mozangle() -> Self {
         let mut options = unsafe { CompileOptions::new() };
-        options.set_validateLoopIndexing(1); // SH_VALIDATE
         options.set_objectCode(1);
         options.set_variables(1); // For uniform_name_map()
         options.set_emulateAbsIntFunction(1); // To workaround drivers
