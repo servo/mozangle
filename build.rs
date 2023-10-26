@@ -30,15 +30,14 @@ fn main() {
         panic!("Do not know how to build DLLs for a non-Windows platform.");
     }
 
-    // Contains compiled libs
-    let mut libs: HashSet<Libs> = HashSet::new();
+    let mut compiled_libraries: HashSet<Libs> = HashSet::new();
 
-    build_translator(&mut libs, &target);
+    build_translator(&mut compiled_libraries, &target);
 
     #[cfg(feature = "build_dlls")]
     {
         for lib in build_data::GLESv2.use_libs {
-            build_lib(&mut libs, &target, *lib);
+            build_lib(&mut compiled_libraries, &target, *lib);
         }
         build_windows_dll(
             &build_data::GLESv2,
@@ -59,7 +58,7 @@ fn main() {
     #[cfg(feature = "egl")]
     {
         if !cfg!(feature = "build_dlls") {
-            build_lib(&mut libs, &target, Libs::EGL);
+            build_lib(&mut compiled_libraries, &target, Libs::EGL);
         }
         generate_gl_bindings();
     }
@@ -121,14 +120,10 @@ fn build_windows_dll(data: &build_data::Data, dll_name: &str, def_file: &str) {
     cmd.arg(&zlib_link_arg);
 
     if dll_name == "libGLESv2" {
-        //std::fs::rename(out_path.join("libGLESv2.lib"), out_path.join("libGLESv2_static.lib")).unwrap();
-        //cmd.arg(out_path.join("libGLESv2_static.lib"));
         // transitive lib (that's the only case)
         cmd.arg(out_path.join("preprocessor.lib"));
         for file in data.sources {
-            //if !file.contains("libANGLE") {
             cmd.arg(fixup_path(file));
-            //}
         }
     } else {
         for file in data.sources {
@@ -154,16 +149,16 @@ fn build_windows_dll(data: &build_data::Data, dll_name: &str, def_file: &str) {
     assert!(status.unwrap().success());
 }
 
-fn build_lib(libs: &mut HashSet<Libs>, target: &String, lib: Libs) {
-    // Check if we already built it do not rebuild
-    if libs.contains(&lib) {
+fn build_lib(compiled_libraries: &mut HashSet<Libs>, target: &String, lib: Libs) {
+    // Do not rebuild this library if it is already built.
+    if compiled_libraries.contains(&lib) {
         return;
     }
 
     println!("build_lib: {lib:?}");
     let data = lib.to_data();
     for dep_lib in data.use_libs {
-        build_lib(libs, target, *dep_lib);
+        build_lib(compiled_libraries, target, *dep_lib);
     }
     let repo = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
     env::set_current_dir(repo).unwrap();
@@ -185,12 +180,10 @@ fn build_lib(libs: &mut HashSet<Libs>, target: &String, lib: Libs) {
         build.include(fixup_path(file));
     }
 
-    //if matches!(lib, Libs::COMPRESSION_UTILS_PORTABLE) {
     // add zlib from libz-sys to include path
     if let Ok(zlib_include_dir) = env::var("DEP_Z_INCLUDE") {
         build.include(zlib_include_dir.replace("\\", "/"));
     }
-    //}
 
     for file in data.sources {
         build.file(fixup_path(file));
@@ -244,8 +237,8 @@ fn build_lib(libs: &mut HashSet<Libs>, target: &String, lib: Libs) {
     // Enable multiprocessing for faster builds.
     build.flag_if_supported("/MP");
 
-    // we want all symbols as they are for consumers
-    if matches!(lib, Libs::EGL | Libs::GLESv2) {
+    // we want all symbols as they are for consumers (are shared libs)
+    if data.shared {
         build.link_lib_modifier("-bundle");
         build.link_lib_modifier("+whole-archive");
     }
@@ -256,12 +249,12 @@ fn build_lib(libs: &mut HashSet<Libs>, target: &String, lib: Libs) {
         println!("cargo:rustc-link-lib={}", lib);
     }
 
-    libs.insert(lib);
+    compiled_libraries.insert(lib);
 }
 
-fn build_translator(libs: &mut HashSet<Libs>, target: &String) {
+fn build_translator(compiled_libraries: &mut HashSet<Libs>, target: &String) {
     println!("build_translator");
-    build_lib(libs, target, Libs::TRANSLATOR);
+    build_lib(compiled_libraries, target, Libs::TRANSLATOR);
     let data = build_data::TRANSLATOR;
 
     let repo = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
@@ -283,7 +276,6 @@ fn build_translator(libs: &mut HashSet<Libs>, target: &String) {
         clang_args.push(fixup_path(file));
     }
 
-    // Change to one of the directory that contains moz.build
     let mut build = cc::Build::new();
 
     for flag in &clang_args {
@@ -359,6 +351,7 @@ const ALLOWLIST_FN: &'static [&'static str] = &[
     "GLSLangGetNumUnpackedVaryingVectors",
 ];
 
+/// Change to one of the directory that contains moz.build
 fn fixup_path(path: &str) -> String {
     let prefix = "../../";
     assert!(path.starts_with(prefix));

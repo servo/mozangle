@@ -1,0 +1,12 @@
+diff --git a/gfx/angle/checkout/include/GLSLANG/ShaderVars.h b/gfx/angle/checkout/include/GLSLANG/ShaderVars.h
+index 3ff8618..6adb28d 100644
+--- a/gfx/angle/checkout/include/GLSLANG/ShaderVars.h
++++ b/gfx/angle/checkout/include/GLSLANG/ShaderVars.h
+@@ -12,6 +12,7 @@
+
+ #include <algorithm>
+ #include <array>
++#include <cstdint>
+ #include <string>
+ #include <vector>
+
