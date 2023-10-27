@@ -47,7 +47,6 @@ void main() {
     assert!(compiler.compile_and_translate(&[source]).is_ok());
 
     let map = compiler.uniform_name_map();
-    println!("{:?}", map);
     let keys = map.keys().collect::<Vec<_>>();
     assert_eq!(keys, &["uSampler"], "name hashing map: {:?}", map)
 }
@@ -69,7 +68,6 @@ gl_FragColor = vec4(0, 1, 0, 1);  // green
     let compiler = ShaderValidator::for_webgl(FRAGMENT_SHADER, Output::Glsl, &resources).unwrap();
 
     let result = compiler.compile_and_translate(&[SHADER]).unwrap();
-    println!("{:?}", result);
     // Use result.contains instead of equal because Angle may add some extensions such as
     // "#extension GL_ARB_gpu_shader5 : enable" on some platorms and compilation options.
     // See TranslatorGLSL.cpp for more details.
@@ -94,6 +92,5 @@ gl_FragColor = vec4(0, 1, 0, 1);  // green
             .expect("Failed to create a validator for essl");
 
     let result = compiler.compile_and_translate(&[SHADER]).unwrap();
-    println!("{:?}", result);
     assert!(result.contains(EXPECTED));
 }
