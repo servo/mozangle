@@ -82,6 +82,7 @@ fn build_windows_dll(data: &build_data::Data, dll_name: &str, def_file: &str) {
         build.define(k, v);
     }
     // add zlib from libz-sys to include path
+    // See: https://doc.rust-lang.org/cargo/reference/build-script-examples.html#using-another-sys-crate
     let zlib_link_arg = if let Ok(zlib_include_dir) = env::var("DEP_Z_INCLUDE") {
         build.include(zlib_include_dir.replace("\\", "/"));
         PathBuf::from(zlib_include_dir)
@@ -163,7 +164,6 @@ fn build_lib(compiled_libraries: &mut HashSet<Libs>, target: &String, lib: Libs)
     let repo = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
     env::set_current_dir(repo).unwrap();
 
-    // Change to one of the directory that contains moz.build
     let mut build = cc::Build::new();
 
     build.cpp(true).std("c++17").warnings(false);
@@ -181,6 +181,7 @@ fn build_lib(compiled_libraries: &mut HashSet<Libs>, target: &String, lib: Libs)
     }
 
     // add zlib from libz-sys to include path
+    // See: https://doc.rust-lang.org/cargo/reference/build-script-examples.html#using-another-sys-crate
     if let Ok(zlib_include_dir) = env::var("DEP_Z_INCLUDE") {
         build.include(zlib_include_dir.replace("\\", "/"));
     }
@@ -190,7 +191,8 @@ fn build_lib(compiled_libraries: &mut HashSet<Libs>, target: &String, lib: Libs)
     }
 
     if matches!(lib, Libs::ANGLE_COMMON) {
-        // Hard-code lines like `if CONFIG['OS_ARCH'] == 'Darwin':` in moz.build files
+        // These platform-specific files are added conditionally in moz.build files
+        // `if CONFIG['OS_ARCH'] == 'Darwin':`
         for &(os, sources) in &[
             (
                 "darwin",
@@ -351,7 +353,7 @@ const ALLOWLIST_FN: &'static [&'static str] = &[
     "GLSLangGetNumUnpackedVaryingVectors",
 ];
 
-/// Change to one of the directory that contains moz.build
+/// Make a path relative to the working directory that is used for the build.
 fn fixup_path(path: &str) -> String {
     let prefix = "../../";
     assert!(path.starts_with(prefix));

@@ -7,7 +7,8 @@ ANGLE = path.join(REPO, "gfx", "angle")
 
 
 def libs():
-    return listdir(path.join(ANGLE, "targets"))
+    # sorting for consistency between os
+    return sorted(listdir(path.join(ANGLE, "targets")))
 
 
 def lib2const(s: str):
@@ -112,11 +113,6 @@ def no_platform_sources(source):
     return "system_utils_posix.cpp" not in source and "system_utils_linux.cpp" not in source
 
 
-def no_zlib(s):
-    # Filter out any accidental inclusion of platform-specific source files.
-    return "zlib" not in s
-
-
 def write_lib(lib, data, f):
     name = str.encode(lib2const(lib))
     defines = [
@@ -133,7 +129,7 @@ def write_lib(lib, data, f):
     write_list(b"includes", map(string_literal, data["LOCAL_INCLUDES"]), f)
     write_list(b"defines", defines, f)
     write_list(b"os_libs", map(string_literal, data["OS_LIBS"]), f)
-    write_list(b"use_libs", map(lib_enum, filter(no_zlib, data["USE_LIBS"])), f)
+    write_list(b"use_libs", map(lib_enum, filter(lambda s: "zlib" not in s, data["USE_LIBS"])), f)
     if data["SHARED"]:
         f.write(b"    shared: true,\n")
     else:
