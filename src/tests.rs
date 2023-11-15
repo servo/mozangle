@@ -1,7 +1,7 @@
 use shaders::*;
-use std::sync::{Once, ONCE_INIT};
+use std::sync::Once;
 
-static GLSLANG_INITIALIZATION: Once = ONCE_INIT;
+static GLSLANG_INITIALIZATION: Once = Once::new();
 
 fn init() {
     GLSLANG_INITIALIZATION.call_once(|| initialize().unwrap());
