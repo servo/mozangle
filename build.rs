@@ -291,7 +291,6 @@ fn build_translator(compiled_libraries: &mut HashSet<Libs>, target: &String) {
         .flag_if_supported("/wd4127")
         .flag_if_supported("/wd9002");
 
-    cmd.arg("-o").arg(&file);
     let status = cmd.status().expect("Failed to link the dynamic library");
     assert!(status.success(), "Linking failed");
 
