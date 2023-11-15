@@ -4,12 +4,10 @@ extern crate cc;
 #[cfg(feature = "egl")]
 extern crate gl_generator;
 extern crate walkdir;
-
 extern crate bindgen;
 
 use std::collections::HashSet;
 use std::env;
-#[cfg(feature = "egl")]
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -293,11 +291,9 @@ fn build_translator(compiled_libraries: &mut HashSet<Libs>, target: &String) {
         .flag_if_supported("/wd4127")
         .flag_if_supported("/wd9002");
 
-    if target.contains("x86_64") || target.contains("i686") {
-        build
-            .flag_if_supported("-msse2") // GNU
-            .flag_if_supported("-arch:SSE2"); // MSVC
-    }
+    cmd.arg("-o").arg(&file);
+    let status = cmd.status().expect("Failed to link the dynamic library");
+    assert!(status.success(), "Linking failed");
 
     build.link_lib_modifier("-whole-archive");
 
