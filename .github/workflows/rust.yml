@@ -4,10 +4,10 @@ on:
   push:
     branches-ignore:
       - gh-readonly-queue/**
-      - master
+      - main
   pull_request:
   merge_group:
-    branches: [master]
+    branches: [main]
   schedule:
     # Runs at 04:30, every Saturday
     - cron: "30 4 * * 6"
