@@ -1,10 +1,10 @@
 #![allow(non_upper_case_globals)]
 
+extern crate bindgen;
 extern crate cc;
 #[cfg(feature = "egl")]
 extern crate gl_generator;
 extern crate walkdir;
-extern crate bindgen;
 
 use std::collections::HashSet;
 use std::env;
@@ -282,6 +282,7 @@ fn build_translator(compiled_libraries: &mut HashSet<Libs>, target: &String) {
         build.flag(flag);
     }
 
+
     build
         .file("src/shaders/glslang-c.cpp")
         .cpp(true)
@@ -314,10 +315,6 @@ fn build_translator(compiled_libraries: &mut HashSet<Libs>, target: &String) {
         .clang_arg("-x")
         .clang_arg("c++")
         .clang_arg("-std=c++17");
-
-    if target.contains("x86_64") || target.contains("i686") {
-        builder = builder.clang_arg("-msse2")
-    }
 
     for func in ALLOWLIST_FN {
         builder = builder.allowlist_function(func)
