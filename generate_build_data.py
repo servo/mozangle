@@ -7,7 +7,7 @@ ANGLE = path.join(REPO, "gfx", "angle")
 
 
 def libs():
-    # sorting for consistency between os
+    # These are sorted to ensure consistency between operating systems.
     return sorted(listdir(path.join(ANGLE, "targets")))
 
 
