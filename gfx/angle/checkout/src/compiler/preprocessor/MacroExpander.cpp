@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2011 The ANGLE Project Authors. All rights reserved.
+// Copyright 2011 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -55,7 +55,7 @@ class TokenLexer : public Lexer
 
 }  // anonymous namespace
 
-class MacroExpander::ScopedMacroReenabler final : angle::NonCopyable
+class [[nodiscard]] MacroExpander::ScopedMacroReenabler final : angle::NonCopyable
 {
   public:
     ScopedMacroReenabler(MacroExpander *expander);

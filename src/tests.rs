@@ -12,7 +12,7 @@ fn test_linkage() {
     init();
 }
 
-#[cfg(all(windows, feature = "build_dlls"))]
+#[cfg(feature = "build_dlls")]
 #[test]
 fn test_egl_dll_linkage() {
     use dlopen::symbor::Library;
@@ -22,7 +22,7 @@ fn test_egl_dll_linkage() {
     assert_eq!(unsafe { GetError() }, ffi::SUCCESS);
 }
 
-#[cfg(all(windows, feature = "egl"))]
+#[cfg(feature = "egl")]
 #[test]
 fn test_egl_linkage() {
     use egl::ffi;
@@ -56,9 +56,10 @@ fn test_translation() {
     const SHADER: &'static str = "void main() {
 gl_FragColor = vec4(0, 1, 0, 1);  // green
 }";
-    const EXPECTED: &'static str = "void main(){
-(gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0));
-}\n";
+    const EXPECTED: &'static str = r#"void main(){
+  (gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0));
+}
+"#;
     const FRAGMENT_SHADER: u32 = 0x8B30;
 
     init();
@@ -67,7 +68,6 @@ gl_FragColor = vec4(0, 1, 0, 1);  // green
     let compiler = ShaderValidator::for_webgl(FRAGMENT_SHADER, Output::Glsl, &resources).unwrap();
 
     let result = compiler.compile_and_translate(&[SHADER]).unwrap();
-    println!("{:?}", result);
     // Use result.contains instead of equal because Angle may add some extensions such as
     // "#extension GL_ARB_gpu_shader5 : enable" on some platorms and compilation options.
     // See TranslatorGLSL.cpp for more details.
@@ -79,9 +79,10 @@ fn test_translation_essl() {
     const SHADER: &'static str = "void main() {
 gl_FragColor = vec4(0, 1, 0, 1);  // green
 }";
-    const EXPECTED: &'static str = "void main(){
-(gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0));
-}\n";
+    const EXPECTED: &'static str = r#"void main(){
+  (gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0));
+}
+"#;
     const FRAGMENT_SHADER: u32 = 0x8B30;
 
     init();
@@ -91,6 +92,5 @@ gl_FragColor = vec4(0, 1, 0, 1);  // green
             .expect("Failed to create a validator for essl");
 
     let result = compiler.compile_and_translate(&[SHADER]).unwrap();
-    println!("{:?}", result);
     assert!(result.contains(EXPECTED));
 }

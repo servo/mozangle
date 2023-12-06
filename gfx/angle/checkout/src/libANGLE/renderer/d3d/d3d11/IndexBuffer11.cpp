@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2012 The ANGLE Project Authors. All rights reserved.
+// Copyright 2012 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -49,11 +49,11 @@ angle::Result IndexBuffer11::initialize(const gl::Context *context,
 
         if (dynamic)
         {
-            mBuffer.setDebugName("IndexBuffer11 (dynamic)");
+            mBuffer.setInternalName("IndexBuffer11(dynamic)");
         }
         else
         {
-            mBuffer.setDebugName("IndexBuffer11 (static)");
+            mBuffer.setInternalName("IndexBuffer11(static)");
         }
     }
 

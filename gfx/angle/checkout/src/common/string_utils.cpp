@@ -7,15 +7,30 @@
 //   String helper functions.
 //
 
-#include "string_utils.h"
+#include "common/string_utils.h"
 
 #include <stdlib.h>
 #include <string.h>
 #include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <sstream>
 
 #include "common/platform.h"
+#include "common/system_utils.h"
+
+namespace
+{
+
+bool EndsWithSuffix(const char *str,
+                    const size_t strLen,
+                    const char *suffix,
+                    const size_t suffixLen)
+{
+    return suffixLen <= strLen && strncmp(str + strLen - suffixLen, suffix, suffixLen) == 0;
+}
+
+}  // anonymous namespace
 
 namespace angle
 {
@@ -57,7 +72,7 @@ std::vector<std::string> SplitString(const std::string &input,
 
         if (resultType == SPLIT_WANT_ALL || !piece.empty())
         {
-            result.push_back(piece);
+            result.push_back(std::move(piece));
         }
     }
 
@@ -101,6 +116,26 @@ std::string TrimString(const std::string &input, const std::string &trimChars)
     return input.substr(begin, end - begin + 1);
 }
 
+std::string GetPrefix(const std::string &input, size_t offset, const char *delimiter)
+{
+    size_t match = input.find(delimiter, offset);
+    if (match == std::string::npos)
+    {
+        return input.substr(offset);
+    }
+    return input.substr(offset, match - offset);
+}
+
+std::string GetPrefix(const std::string &input, size_t offset, char delimiter)
+{
+    size_t match = input.find(delimiter, offset);
+    if (match == std::string::npos)
+    {
+        return input.substr(offset);
+    }
+    return input.substr(offset, match - offset);
+}
+
 bool HexStringToUInt(const std::string &input, unsigned int *uintOut)
 {
     unsigned int offset = 0;
@@ -137,27 +172,6 @@ bool ReadFileToString(const std::string &path, std::string *stringOut)
     return !inFile.fail();
 }
 
-Optional<std::vector<wchar_t>> WidenString(size_t length, const char *cString)
-{
-    std::vector<wchar_t> wcstring(length + 1);
-#if !defined(ANGLE_PLATFORM_WINDOWS)
-    mbstate_t mbstate = {};
-    size_t written    = mbsrtowcs(wcstring.data(), &cString, length + 1, &mbstate);
-    if (written == 0)
-    {
-        return Optional<std::vector<wchar_t>>::Invalid();
-    }
-#else
-    size_t convertedChars = 0;
-    errno_t err = mbstowcs_s(&convertedChars, wcstring.data(), length + 1, cString, _TRUNCATE);
-    if (err != 0)
-    {
-        return Optional<std::vector<wchar_t>>::Invalid();
-    }
-#endif
-    return Optional<std::vector<wchar_t>>(wcstring);
-}
-
 bool BeginsWith(const std::string &str, const std::string &prefix)
 {
     return strncmp(str.c_str(), prefix.c_str(), prefix.length()) == 0;
@@ -178,22 +192,59 @@ bool BeginsWith(const std::string &str, const std::string &prefix, const size_t 
     return strncmp(str.c_str(), prefix.c_str(), prefixLength) == 0;
 }
 
+bool EndsWith(const std::string &str, const std::string &suffix)
+{
+    return EndsWithSuffix(str.c_str(), str.length(), suffix.c_str(), suffix.length());
+}
+
 bool EndsWith(const std::string &str, const char *suffix)
 {
-    const auto len = strlen(suffix);
-    if (len > str.size())
+    return EndsWithSuffix(str.c_str(), str.length(), suffix, strlen(suffix));
+}
+
+bool EndsWith(const char *str, const char *suffix)
+{
+    return EndsWithSuffix(str, strlen(str), suffix, strlen(suffix));
+}
+
+bool ContainsToken(const std::string &tokenStr, char delimiter, const std::string &token)
+{
+    if (token.empty())
+    {
         return false;
-
-    const char *end = str.c_str() + str.size() - len;
-
-    return memcmp(end, suffix, len) == 0;
+    }
+    // Compare token with all sub-strings terminated by delimiter or end of string
+    std::string::size_type start = 0u;
+    do
+    {
+        std::string::size_type end = tokenStr.find(delimiter, start);
+        if (end == std::string::npos)
+        {
+            end = tokenStr.length();
+        }
+        const std::string::size_type length = end - start;
+        if (length == token.length() && tokenStr.compare(start, length, token) == 0)
+        {
+            return true;
+        }
+        start = end + 1u;
+    } while (start < tokenStr.size());
+    return false;
 }
 
 void ToLower(std::string *str)
 {
-    for (auto &ch : *str)
+    for (char &ch : *str)
     {
         ch = static_cast<char>(::tolower(ch));
+    }
+}
+
+void ToUpper(std::string *str)
+{
+    for (char &ch : *str)
+    {
+        ch = static_cast<char>(::toupper(ch));
     }
 }
 
@@ -208,6 +259,99 @@ bool ReplaceSubstring(std::string *str,
     }
     str->replace(replacePos, substring.size(), replacement);
     return true;
+}
+
+int ReplaceAllSubstrings(std::string *str,
+                         const std::string &substring,
+                         const std::string &replacement)
+{
+    int count = 0;
+    while (ReplaceSubstring(str, substring, replacement))
+    {
+        count++;
+    }
+    return count;
+}
+
+std::string ToCamelCase(const std::string &str)
+{
+    std::string result;
+
+    bool lastWasUnderscore = false;
+    for (char c : str)
+    {
+        if (c == '_')
+        {
+            lastWasUnderscore = true;
+            continue;
+        }
+
+        if (lastWasUnderscore)
+        {
+            c                 = static_cast<char>(std::toupper(c));
+            lastWasUnderscore = false;
+        }
+        result += c;
+    }
+
+    return result;
+}
+
+std::vector<std::string> GetStringsFromEnvironmentVarOrAndroidProperty(const char *varName,
+                                                                       const char *propertyName,
+                                                                       const char *separator)
+{
+    std::string environment = GetEnvironmentVarOrAndroidProperty(varName, propertyName);
+    return SplitString(environment, separator, TRIM_WHITESPACE, SPLIT_WANT_NONEMPTY);
+}
+
+std::vector<std::string> GetCachedStringsFromEnvironmentVarOrAndroidProperty(
+    const char *varName,
+    const char *propertyName,
+    const char *separator)
+{
+    std::string environment = GetEnvironmentVarOrAndroidProperty(varName, propertyName);
+    return SplitString(environment, separator, TRIM_WHITESPACE, SPLIT_WANT_NONEMPTY);
+}
+
+// glob can have * as wildcard
+bool NamesMatchWithWildcard(const char *glob, const char *name)
+{
+    // Find the first * in glob.
+    const char *firstWildcard = strchr(glob, '*');
+
+    // If there are no wildcards, match the strings precisely.
+    if (firstWildcard == nullptr)
+    {
+        return strcmp(glob, name) == 0;
+    }
+
+    // Otherwise, match up to the wildcard first.
+    size_t preWildcardLen = firstWildcard - glob;
+    if (strncmp(glob, name, preWildcardLen) != 0)
+    {
+        return false;
+    }
+
+    const char *postWildcardRef = glob + preWildcardLen + 1;
+
+    // As a small optimization, if the wildcard is the last character in glob, accept the match
+    // already.
+    if (postWildcardRef[0] == '\0')
+    {
+        return true;
+    }
+
+    // Try to match the wildcard with a number of characters.
+    for (size_t matchSize = 0; name[matchSize] != '\0'; ++matchSize)
+    {
+        if (NamesMatchWithWildcard(postWildcardRef, name + matchSize))
+        {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 }  // namespace angle

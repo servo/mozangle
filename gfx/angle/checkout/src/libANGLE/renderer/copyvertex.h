@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2013-2015 The ANGLE Project Authors. All rights reserved.
+// Copyright 2013 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -24,40 +24,57 @@ template <typename T,
           size_t inputComponentCount,
           size_t outputComponentCount,
           uint32_t alphaDefaultValueBits>
-inline void CopyNativeVertexData(const uint8_t *input,
+void CopyNativeVertexData(const uint8_t *input, size_t stride, size_t count, uint8_t *output);
+
+template <size_t inputComponentCount, size_t outputComponentCount>
+void Copy8SintTo16SintVertexData(const uint8_t *input,
                                  size_t stride,
                                  size_t count,
                                  uint8_t *output);
 
-template <size_t inputComponentCount, size_t outputComponentCount>
-inline void Copy8SintTo16SintVertexData(const uint8_t *input,
-                                        size_t stride,
-                                        size_t count,
-                                        uint8_t *output);
-
 template <size_t componentCount>
-inline void Copy8SnormTo16SnormVertexData(const uint8_t *input,
-                                          size_t stride,
-                                          size_t count,
-                                          uint8_t *output);
+void Copy8SnormTo16SnormVertexData(const uint8_t *input,
+                                   size_t stride,
+                                   size_t count,
+                                   uint8_t *output);
 
 template <size_t inputComponentCount, size_t outputComponentCount>
-inline void Copy32FixedTo32FVertexData(const uint8_t *input,
-                                       size_t stride,
-                                       size_t count,
-                                       uint8_t *output);
+void Copy32FixedTo32FVertexData(const uint8_t *input, size_t stride, size_t count, uint8_t *output);
 
-template <typename T, size_t inputComponentCount, size_t outputComponentCount, bool normalized>
-inline void CopyTo32FVertexData(const uint8_t *input, size_t stride, size_t count, uint8_t *output);
+template <typename T,
+          size_t inputComponentCount,
+          size_t outputComponentCount,
+          bool normalized,
+          bool toHalf>
+void CopyToFloatVertexData(const uint8_t *input, size_t stride, size_t count, uint8_t *output);
 
-template <bool isSigned, bool normalized, bool toFloat>
-inline void CopyXYZ10W2ToXYZW32FVertexData(const uint8_t *input,
-                                           size_t stride,
-                                           size_t count,
-                                           uint8_t *output);
+template <size_t inputComponentCount, size_t outputComponentCount>
+void Copy32FTo16FVertexData(const uint8_t *input, size_t stride, size_t count, uint8_t *output);
+
+void CopyXYZ32FToXYZ9E5(const uint8_t *input, size_t stride, size_t count, uint8_t *output);
+
+void CopyXYZ32FToX11Y11B10F(const uint8_t *input, size_t stride, size_t count, uint8_t *output);
+
+template <bool isSigned, bool normalized, bool toFloat, bool toHalf>
+void CopyXYZ10W2ToXYZWFloatVertexData(const uint8_t *input,
+                                      size_t stride,
+                                      size_t count,
+                                      uint8_t *output);
+
+template <bool isSigned, bool normalized, bool toHalf>
+void CopyXYZ10ToXYZWFloatVertexData(const uint8_t *input,
+                                    size_t stride,
+                                    size_t count,
+                                    uint8_t *output);
+
+template <bool isSigned, bool normalized, bool toHalf>
+void CopyW2XYZ10ToXYZWFloatVertexData(const uint8_t *input,
+                                      size_t stride,
+                                      size_t count,
+                                      uint8_t *output);
 
 }  // namespace rx
 
-#include "copyvertex.inc"
+#include "copyvertex.inc.h"
 
 #endif  // LIBANGLE_RENDERER_COPYVERTEX_H_

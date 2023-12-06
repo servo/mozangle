@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2002-2011 The ANGLE Project Authors. All rights reserved.
+// Copyright 2002 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -19,15 +19,15 @@ class TranslatorESSL : public TCompiler
 
   protected:
     void initBuiltInFunctionEmulator(BuiltInFunctionEmulator *emu,
-                                     ShCompileOptions compileOptions) override;
+                                     const ShCompileOptions &compileOptions) override;
 
-    void translate(TIntermBlock *root,
-                   ShCompileOptions compileOptions,
-                   PerformanceDiagnostics *perfDiagnostics) override;
+    [[nodiscard]] bool translate(TIntermBlock *root,
+                                 const ShCompileOptions &compileOptions,
+                                 PerformanceDiagnostics *perfDiagnostics) override;
     bool shouldFlattenPragmaStdglInvariantAll() override;
 
   private:
-    void writeExtensionBehavior(ShCompileOptions compileOptions);
+    void writeExtensionBehavior(const ShCompileOptions &compileOptions);
 };
 
 }  // namespace sh

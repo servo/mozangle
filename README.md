@@ -35,7 +35,7 @@ ANGLE supports more platforms, this crate only configures the Direct3D 11 render
 
 ```toml
 [dependencies]
-mozangle = { version = "0.4", features = ["egl"] }
+mozangle = { version = "0.5", features = ["egl"] }
 ```
 
 

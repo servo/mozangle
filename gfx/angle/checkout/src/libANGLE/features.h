@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2014 The ANGLE Project Authors. All rights reserved.
+// Copyright 2014 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -29,11 +29,6 @@
 #    define ANGLE_VSYNC ANGLE_ENABLED
 #endif
 
-// Program binary loading
-#if !defined(ANGLE_PROGRAM_BINARY_LOAD)
-#    define ANGLE_PROGRAM_BINARY_LOAD ANGLE_ENABLED
-#endif
-
 // Append HLSL assembly to shader debug info. Defaults to enabled in Debug and off in Release.
 #if !defined(ANGLE_APPEND_ASSEMBLY_TO_SHADER_DEBUG_INFO)
 #    if !defined(NDEBUG)
@@ -53,13 +48,9 @@
 #endif
 
 // Controls if our threading code uses std::async or falls back to single-threaded operations.
-#if !defined(ANGLE_STD_ASYNC_WORKERS)
+// Note that we can't easily use std::async in UWPs due to UWP threading restrictions.
+#if !defined(ANGLE_STD_ASYNC_WORKERS) && !defined(ANGLE_ENABLE_WINDOWS_UWP)
 #    define ANGLE_STD_ASYNC_WORKERS ANGLE_ENABLED
-#endif      // !defined(ANGLE_STD_ASYNC_WORKERS)
-
-// Force thread safety in all of ANGLE by locking a global mutex in every ANGLE entry point.
-#if !defined(ANGLE_FORCE_THREAD_SAFETY)
-#    define ANGLE_FORCE_THREAD_SAFETY ANGLE_DISABLED
-#endif  // !defined(ANGLE_FORCE_THREAD_SAFETY)
+#endif  // !defined(ANGLE_STD_ASYNC_WORKERS) && & !defined(ANGLE_ENABLE_WINDOWS_UWP)
 
 #endif  // LIBANGLE_FEATURES_H_

@@ -1,14 +1,16 @@
 //
-// Copyright (c) 2002-2010 The ANGLE Project Authors. All rights reserved.
+// Copyright 2002 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
 
 #include "compiler/translator/tree_util/IntermTraverse.h"
 
+#include "compiler/translator/Compiler.h"
 #include "compiler/translator/InfoSink.h"
 #include "compiler/translator/SymbolTable.h"
 #include "compiler/translator/tree_util/IntermNode_util.h"
+#include "compiler/translator/util.h"
 
 namespace sh
 {
@@ -37,7 +39,10 @@ void TIntermTraverser::traverse(T *node)
 
         while (childIndex < childCount && visit)
         {
+            mCurrentChildIndex = childIndex;
             node->getChildNode(childIndex)->traverse(this);
+            mCurrentChildIndex = childIndex;
+
             if (inVisit && childIndex != childCount - 1)
             {
                 visit = node->visit(InVisit, this);
@@ -49,6 +54,10 @@ void TIntermTraverser::traverse(T *node)
             node->visit(PostVisit, this);
     }
 }
+
+// Instantiate template for RewriteAtomicFunctionExpressions, in case this gets inlined thus not
+// exported from the TU.
+template void TIntermTraverser::traverse(TIntermNode *);
 
 void TIntermNode::traverse(TIntermTraverser *it)
 {
@@ -161,9 +170,9 @@ bool TIntermDeclaration::visit(Visit visit, TIntermTraverser *it)
     return it->visitDeclaration(visit, this);
 }
 
-bool TIntermInvariantDeclaration::visit(Visit visit, TIntermTraverser *it)
+bool TIntermGlobalQualifierDeclaration::visit(Visit visit, TIntermTraverser *it)
 {
-    return it->visitInvariantDeclaration(visit, this);
+    return it->visitGlobalQualifierDeclaration(visit, this);
 }
 
 bool TIntermBlock::visit(Visit visit, TIntermTraverser *it)
@@ -212,7 +221,8 @@ TIntermTraverser::TIntermTraverser(bool preVisit,
       mMaxDepth(0),
       mMaxAllowedDepth(std::numeric_limits<int>::max()),
       mInGlobalScope(true),
-      mSymbolTable(symbolTable)
+      mSymbolTable(symbolTable),
+      mCurrentChildIndex(0)
 {
     // Only enabling inVisit is not supported.
     ASSERT(!(inVisit && !preVisit && !postVisit));
@@ -420,14 +430,19 @@ void TIntermTraverser::traverseFunctionDefinition(TIntermFunctionDefinition *nod
 
     if (visit)
     {
+        mCurrentChildIndex = 0;
         node->getFunctionPrototype()->traverse(this);
+        mCurrentChildIndex = 0;
+
         if (inVisit)
             visit = node->visit(InVisit, this);
         if (visit)
         {
-            mInGlobalScope = false;
+            mInGlobalScope     = false;
+            mCurrentChildIndex = 1;
             node->getBody()->traverse(this);
-            mInGlobalScope = true;
+            mCurrentChildIndex = 1;
+            mInGlobalScope     = true;
             if (postVisit)
                 visit = node->visit(PostVisit, this);
         }
@@ -453,11 +468,15 @@ void TIntermTraverser::traverseBlock(TIntermBlock *node)
 
     if (visit)
     {
-        for (auto *child : *sequence)
+        for (size_t childIndex = 0; childIndex < sequence->size(); ++childIndex)
         {
+            TIntermNode *child = (*sequence)[childIndex];
             if (visit)
             {
+                mCurrentChildIndex = childIndex;
                 child->traverse(this);
+                mCurrentChildIndex = childIndex;
+
                 if (inVisit)
                 {
                     if (child != sequence->back())
@@ -485,23 +504,22 @@ bool TIntermTraverser::CompareInsertion(const NodeInsertMultipleEntry &a,
 {
     if (a.parent != b.parent)
     {
-        return a.parent > b.parent;
+        return a.parent < b.parent;
     }
-    return a.position > b.position;
+    return a.position < b.position;
 }
 
-void TIntermTraverser::updateTree()
+bool TIntermTraverser::updateTree(TCompiler *compiler, TIntermNode *node)
 {
-    // Sort the insertions so that insertion position is decreasing. This way multiple insertions to
+    // Sort the insertions so that insertion position is increasing and same position insertions are
+    // not reordered. The insertions are processed in reverse order so that multiple insertions to
     // the same parent node are handled correctly.
-    std::sort(mInsertions.begin(), mInsertions.end(), CompareInsertion);
+    std::stable_sort(mInsertions.begin(), mInsertions.end(), CompareInsertion);
     for (size_t ii = 0; ii < mInsertions.size(); ++ii)
     {
-        // We can't know here what the intended ordering of two insertions to the same position is,
-        // so it is not supported.
-        ASSERT(ii == 0 || mInsertions[ii].position != mInsertions[ii - 1].position ||
-               mInsertions[ii].parent != mInsertions[ii - 1].parent);
-        const NodeInsertMultipleEntry &insertion = mInsertions[ii];
+        // If two insertions are to the same position, insert them in the order they were specified.
+        // The std::stable_sort call above will automatically guarantee this.
+        const NodeInsertMultipleEntry &insertion = mInsertions[mInsertions.size() - ii - 1];
         ASSERT(insertion.parent);
         if (!insertion.insertionsAfter.empty())
         {
@@ -523,6 +541,22 @@ void TIntermTraverser::updateTree()
         bool replaced =
             replacement.parent->replaceChildNode(replacement.original, replacement.replacement);
         ASSERT(replaced);
+
+        // Make sure the precision is not accidentally dropped.  It's ok if the precision is not the
+        // same, as the transformations are allowed to replace an expression with one that is
+        // temporarily evaluated at a different (likely higher) precision.
+        TIntermTyped *originalAsTyped = replacement.original->getAsTyped();
+        TIntermTyped *replacementAsTyped =
+            replacement.replacement ? replacement.replacement->getAsTyped() : nullptr;
+        if (originalAsTyped != nullptr && replacementAsTyped != nullptr)
+        {
+            const TType &originalType    = originalAsTyped->getType();
+            const TType &replacementType = replacementAsTyped->getType();
+            ASSERT(!IsPrecisionApplicableToType(originalType.getBasicType()) ||
+                   !IsPrecisionApplicableToType(replacementType.getBasicType()) ||
+                   originalType.getPrecision() == EbpUndefined ||
+                   replacementType.getPrecision() != EbpUndefined);
+        }
 
         if (!replacement.originalBecomesChildOfReplacement)
         {
@@ -548,6 +582,8 @@ void TIntermTraverser::updateTree()
     }
 
     clearReplacementQueue();
+
+    return compiler->validateAST(node);
 }
 
 void TIntermTraverser::clearReplacementQueue()
@@ -571,11 +607,44 @@ void TIntermTraverser::queueReplacementWithParent(TIntermNode *parent,
     mReplacements.push_back(NodeUpdateEntry(parent, original, replacement, originalBecomesChild));
 }
 
-TLValueTrackingTraverser::TLValueTrackingTraverser(bool preVisit,
-                                                   bool inVisit,
-                                                   bool postVisit,
+void TIntermTraverser::queueAccessChainReplacement(TIntermTyped *replacement)
+{
+    uint32_t ancestorIndex  = 0;
+    TIntermTyped *toReplace = nullptr;
+    while (true)
+    {
+        TIntermNode *ancestor = getAncestorNode(ancestorIndex);
+        ASSERT(ancestor != nullptr);
+
+        TIntermBinary *asBinary = ancestor->getAsBinaryNode();
+        if (asBinary == nullptr ||
+            (asBinary->getOp() != EOpIndexDirect && asBinary->getOp() != EOpIndexIndirect))
+        {
+            break;
+        }
+
+        replacement = new TIntermBinary(asBinary->getOp(), replacement, asBinary->getRight());
+        toReplace   = asBinary;
+
+        ++ancestorIndex;
+    }
+
+    if (toReplace == nullptr)
+    {
+        queueReplacement(replacement, OriginalNode::IS_DROPPED);
+    }
+    else
+    {
+        queueReplacementWithParent(getAncestorNode(ancestorIndex), toReplace, replacement,
+                                   OriginalNode::IS_DROPPED);
+    }
+}
+
+TLValueTrackingTraverser::TLValueTrackingTraverser(bool preVisitIn,
+                                                   bool inVisitIn,
+                                                   bool postVisitIn,
                                                    TSymbolTable *symbolTable)
-    : TIntermTraverser(preVisit, inVisit, postVisit, symbolTable),
+    : TIntermTraverser(preVisitIn, inVisitIn, postVisitIn, symbolTable),
       mOperatorRequiresLValue(false),
       mInFunctionCallOutParameter(false)
 {
@@ -609,7 +678,8 @@ void TLValueTrackingTraverser::traverseAggregate(TIntermAggregate *node)
                     ASSERT(paramIndex < node->getFunction()->getParamCount());
                     TQualifier qualifier =
                         node->getFunction()->getParam(paramIndex)->getType().getQualifier();
-                    setInFunctionCallOutParameter(qualifier == EvqOut || qualifier == EvqInOut);
+                    setInFunctionCallOutParameter(qualifier == EvqParamOut ||
+                                                  qualifier == EvqParamInOut);
                     ++paramIndex;
                 }
                 else

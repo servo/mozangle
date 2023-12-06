@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2002-2010 The ANGLE Project Authors. All rights reserved.
+// Copyright 2002 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -34,7 +34,8 @@ Config::Config()
       alphaMaskSize(0),
       bindToTextureRGB(EGL_FALSE),
       bindToTextureRGBA(EGL_FALSE),
-      colorBufferType(EGL_NONE),
+      bindToTextureTarget(EGL_TEXTURE_2D),
+      colorBufferType(EGL_RGB_BUFFER),
       configCaveat(EGL_NONE),
       configID(0),
       conformant(0),
@@ -60,7 +61,9 @@ Config::Config()
       transparentBlueValue(0),
       optimalOrientation(0),
       colorComponentType(EGL_COLOR_COMPONENT_TYPE_FIXED_EXT),
-      recordable(EGL_FALSE)
+      recordable(EGL_FALSE),
+      framebufferTarget(EGL_FALSE),  // TODO: http://anglebug.com/4208
+      yInverted(EGL_FALSE)
 {}
 
 Config::~Config() {}
@@ -273,7 +276,7 @@ std::vector<const Config *> ConfigSet::filter(const AttributeMap &attributeMap) 
                     match = config.configID == attributeValue;
                     break;
                 case EGL_LEVEL:
-                    match = config.level >= attributeValue;
+                    match = config.level == attributeValue;
                     break;
                 case EGL_NATIVE_RENDERABLE:
                     match = config.nativeRenderable == static_cast<EGLBoolean>(attributeValue);
@@ -294,19 +297,31 @@ std::vector<const Config *> ConfigSet::filter(const AttributeMap &attributeMap) 
                     match = config.transparentType == static_cast<EGLenum>(attributeValue);
                     break;
                 case EGL_TRANSPARENT_BLUE_VALUE:
-                    match = config.transparentBlueValue == attributeValue;
+                    if (attributeMap.get(EGL_TRANSPARENT_TYPE, EGL_NONE) != EGL_NONE)
+                    {
+                        match = config.transparentBlueValue == attributeValue;
+                    }
                     break;
                 case EGL_TRANSPARENT_GREEN_VALUE:
-                    match = config.transparentGreenValue == attributeValue;
+                    if (attributeMap.get(EGL_TRANSPARENT_TYPE, EGL_NONE) != EGL_NONE)
+                    {
+                        match = config.transparentGreenValue == attributeValue;
+                    }
                     break;
                 case EGL_TRANSPARENT_RED_VALUE:
-                    match = config.transparentRedValue == attributeValue;
+                    if (attributeMap.get(EGL_TRANSPARENT_TYPE, EGL_NONE) != EGL_NONE)
+                    {
+                        match = config.transparentRedValue == attributeValue;
+                    }
                     break;
                 case EGL_BIND_TO_TEXTURE_RGB:
                     match = config.bindToTextureRGB == static_cast<EGLBoolean>(attributeValue);
                     break;
                 case EGL_BIND_TO_TEXTURE_RGBA:
                     match = config.bindToTextureRGBA == static_cast<EGLBoolean>(attributeValue);
+                    break;
+                case EGL_BIND_TO_TEXTURE_TARGET_ANGLE:
+                    match = config.bindToTextureTarget == static_cast<EGLenum>(attributeValue);
                     break;
                 case EGL_MIN_SWAP_INTERVAL:
                     match = config.minSwapInterval == attributeValue;
@@ -350,6 +365,22 @@ std::vector<const Config *> ConfigSet::filter(const AttributeMap &attributeMap) 
                     break;
                 case EGL_RECORDABLE_ANDROID:
                     match = config.recordable == static_cast<EGLBoolean>(attributeValue);
+                    break;
+                case EGL_FRAMEBUFFER_TARGET_ANDROID:
+                    match = config.framebufferTarget == static_cast<EGLBoolean>(attributeValue);
+                    break;
+                case EGL_Y_INVERTED_NOK:
+                    match = config.yInverted == static_cast<EGLBoolean>(attributeValue);
+                    break;
+                case EGL_MATCH_FORMAT_KHR:
+                    if (attributeValue == EGL_NONE)
+                    {
+                        match = (config.surfaceType & EGL_LOCK_SURFACE_BIT_KHR) == 0;
+                    }
+                    else
+                    {
+                        match = config.matchFormat == attributeValue;
+                    }
                     break;
                 default:
                     UNREACHABLE();

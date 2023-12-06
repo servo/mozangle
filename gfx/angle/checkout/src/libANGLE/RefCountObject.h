@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2002-2010 The ANGLE Project Authors. All rights reserved.
+// Copyright 2002 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -13,9 +13,11 @@
 #define LIBANGLE_REFCOUNTOBJECT_H_
 
 #include "angle_gl.h"
+#include "common/PackedEnums.h"
 #include "common/debug.h"
 #include "libANGLE/Error.h"
 #include "libANGLE/Observer.h"
+#include "libANGLE/renderer/serial_utils.h"
 
 #include <cstddef>
 
@@ -51,6 +53,50 @@ class RefCountObject : angle::NonCopyable
     virtual ~RefCountObject() { ASSERT(mRefCount == 0); }
 
     mutable size_t mRefCount;
+};
+
+template <class ObjectType, typename ContextT, typename ErrorT = angle::Result>
+class RefCountObjectReleaser : angle::NonCopyable
+{
+  public:
+    using ContextType = ContextT;
+    using ErrorType   = ErrorT;
+
+    RefCountObjectReleaser() {}
+    RefCountObjectReleaser(const ContextType *context, ObjectType *object)
+        : mContext(context), mObject(object)
+    {}
+
+    RefCountObjectReleaser(RefCountObjectReleaser &&other)
+        : mContext(other.mContext), mObject(other.mObject)
+    {
+        other.mContext = nullptr;
+        other.mObject  = nullptr;
+    }
+
+    RefCountObjectReleaser &operator=(RefCountObjectReleaser &&other)
+    {
+        mContext = other.mContext;
+        mObject  = other.mObject;
+
+        other.mContext = nullptr;
+        other.mObject  = nullptr;
+
+        return *this;
+    }
+
+    ~RefCountObjectReleaser()
+    {
+        if (mObject)
+        {
+            reinterpret_cast<RefCountObject<ContextType, ErrorType> *>(mObject)->release(mContext);
+            mObject = nullptr;
+        }
+    }
+
+  private:
+    const ContextType *mContext = nullptr;
+    ObjectType *mObject         = nullptr;
 };
 
 template <class ObjectType, typename ContextT, typename ErrorT = angle::Result>
@@ -91,7 +137,8 @@ class BindingPointer
         ASSERT(mObject == nullptr);
     }
 
-    void set(const ContextType *context, ObjectType *newObject)
+    RefCountObjectReleaser<ObjectType, ContextType, ErrorT> set(const ContextType *context,
+                                                                ObjectType *newObject)
     {
         // addRef first in case newObject == mObject and this is the last reference to it.
         if (newObject != nullptr)
@@ -103,10 +150,7 @@ class BindingPointer
         // Otherwise the object could still be referenced when its destructor is called.
         ObjectType *oldObject = mObject;
         mObject               = newObject;
-        if (oldObject != nullptr)
-        {
-            reinterpret_cast<RefCountObject<ContextType, ErrorType> *>(oldObject)->release(context);
-        }
+        return RefCountObjectReleaser<ObjectType, ContextType, ErrorT>(context, oldObject);
     }
 
     void assign(ObjectType *object) { mObject = object; }
@@ -135,18 +179,22 @@ class BindingPointer;
 
 using RefCountObjectNoID = angle::RefCountObject<Context, angle::Result>;
 
+template <typename IDType>
 class RefCountObject : public gl::RefCountObjectNoID
 {
   public:
-    explicit RefCountObject(GLuint id) : mId(id) {}
+    explicit RefCountObject(rx::Serial serial, IDType id) : mSerial(serial), mId(id) {}
 
-    GLuint id() const { return mId; }
+    rx::Serial serial() const { return mSerial; }
+    IDType id() const { return mId; }
 
   protected:
     ~RefCountObject() override {}
 
   private:
-    GLuint mId;
+    // Unique serials are used to identify resources for frame capture.
+    rx::Serial mSerial;
+    IDType mId;
 };
 
 template <class ObjectType>
@@ -160,10 +208,12 @@ class BindingPointer : public angle::BindingPointer<ObjectType, Context>
 
     BindingPointer(ObjectType *object) : angle::BindingPointer<ObjectType, Context>(object) {}
 
-    GLuint id() const
+    typename ResourceTypeToID<ObjectType>::IDType id() const
     {
         ObjectType *obj = this->get();
-        return obj ? obj->id() : 0;
+        if (obj)
+            return obj->id();
+        return {0};
     }
 };
 
@@ -179,8 +229,7 @@ class OffsetBindingPointer : public BindingPointer<ObjectType>
     void set(const ContextType *context, ObjectType *newObject, GLintptr offset, GLsizeiptr size)
     {
         set(context, newObject);
-        mOffset = offset;
-        mSize   = size;
+        updateOffsetAndSize(newObject, offset, size);
     }
 
     GLintptr getOffset() const { return mOffset; }
@@ -196,14 +245,27 @@ class OffsetBindingPointer : public BindingPointer<ObjectType>
         return !(*this == other);
     }
 
-    void assign(ObjectType *object, GLintptr offset, GLsizeiptr size)
+    void assign(ObjectType *newObject, GLintptr offset, GLsizeiptr size)
     {
-        assign(object);
-        mOffset = offset;
-        mSize   = size;
+        assign(newObject);
+        updateOffsetAndSize(newObject, offset, size);
     }
 
   private:
+    ANGLE_INLINE void updateOffsetAndSize(ObjectType *newObject, GLintptr offset, GLsizeiptr size)
+    {
+        if (newObject)
+        {
+            mOffset = offset;
+            mSize   = size;
+        }
+        else
+        {
+            mOffset = 0;
+            mSize   = 0;
+        }
+    }
+
     // Delete the unparameterized functions. This forces an explicit offset and size.
     using BindingPointer<ObjectType>::set;
     using BindingPointer<ObjectType>::assign;
@@ -219,7 +281,7 @@ class SubjectBindingPointer : protected BindingPointer<SubjectT>, public angle::
     SubjectBindingPointer(angle::ObserverInterface *observer, angle::SubjectIndex index)
         : ObserverBindingBase(observer, index)
     {}
-    ~SubjectBindingPointer() {}
+    ~SubjectBindingPointer() override {}
     SubjectBindingPointer(const SubjectBindingPointer &other) = default;
     SubjectBindingPointer &operator=(const SubjectBindingPointer &other) = default;
 
@@ -253,6 +315,9 @@ namespace egl
 class Display;
 
 using RefCountObject = angle::RefCountObject<Display, Error>;
+
+template <class ObjectType>
+using RefCountObjectReleaser = angle::RefCountObjectReleaser<ObjectType, Display, Error>;
 
 template <class ObjectType>
 using BindingPointer = angle::BindingPointer<ObjectType, Display, Error>;

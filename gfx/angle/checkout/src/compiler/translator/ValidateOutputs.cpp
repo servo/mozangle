@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2013 The ANGLE Project Authors. All rights reserved.
+// Copyright 2013 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -82,7 +82,7 @@ void ValidateOutputsTraverser::visitSymbol(TIntermSymbol *symbol)
             mUnspecifiedLocationOutputs.push_back(symbol);
         }
     }
-    else if (qualifier == EvqFragDepth || qualifier == EvqFragDepthEXT)
+    else if (qualifier == EvqFragDepth)
     {
         mUsesFragDepth = true;
     }
@@ -119,7 +119,7 @@ void ValidateOutputsTraverser::validate(TDiagnostics *diagnostics) const
                 const size_t offsetLocation = location + elementIndex;
                 if ((*validOutputsToUse)[offsetLocation])
                 {
-                    std::stringstream strstr;
+                    std::stringstream strstr = sh::InitializeStream<std::stringstream>();
                     strstr << "conflicting output locations with previously defined output '"
                            << (*validOutputsToUse)[offsetLocation]->getName() << "'";
                     error(*symbol, strstr.str().c_str(), diagnostics);

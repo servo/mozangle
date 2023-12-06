@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2002-2014 The ANGLE Project Authors. All rights reserved.
+// Copyright 2002 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -45,6 +45,14 @@ void InitExtensionBehavior(const ShBuiltInResources &resources, TExtensionBehavi
     {
         extBehavior[TExtension::EXT_frag_depth] = EBhUndefined;
     }
+    if (resources.EXT_primitive_bounding_box)
+    {
+        extBehavior[TExtension::EXT_primitive_bounding_box] = EBhUndefined;
+    }
+    if (resources.OES_primitive_bounding_box)
+    {
+        extBehavior[TExtension::OES_primitive_bounding_box] = EBhUndefined;
+    }
     if (resources.EXT_shader_texture_lod)
     {
         extBehavior[TExtension::EXT_shader_texture_lod] = EBhUndefined;
@@ -53,13 +61,25 @@ void InitExtensionBehavior(const ShBuiltInResources &resources, TExtensionBehavi
     {
         extBehavior[TExtension::EXT_shader_framebuffer_fetch] = EBhUndefined;
     }
+    if (resources.EXT_shader_framebuffer_fetch_non_coherent)
+    {
+        extBehavior[TExtension::EXT_shader_framebuffer_fetch_non_coherent] = EBhUndefined;
+    }
     if (resources.NV_shader_framebuffer_fetch)
     {
         extBehavior[TExtension::NV_shader_framebuffer_fetch] = EBhUndefined;
     }
+    if (resources.NV_shader_noperspective_interpolation)
+    {
+        extBehavior[TExtension::NV_shader_noperspective_interpolation] = EBhUndefined;
+    }
     if (resources.ARM_shader_framebuffer_fetch)
     {
         extBehavior[TExtension::ARM_shader_framebuffer_fetch] = EBhUndefined;
+    }
+    if (resources.OVR_multiview)
+    {
+        extBehavior[TExtension::OVR_multiview] = EBhUndefined;
     }
     if (resources.OVR_multiview2)
     {
@@ -73,9 +93,37 @@ void InitExtensionBehavior(const ShBuiltInResources &resources, TExtensionBehavi
     {
         extBehavior[TExtension::EXT_geometry_shader] = EBhUndefined;
     }
+    if (resources.OES_geometry_shader)
+    {
+        extBehavior[TExtension::OES_geometry_shader] = EBhUndefined;
+    }
+    if (resources.OES_shader_io_blocks)
+    {
+        extBehavior[TExtension::OES_shader_io_blocks] = EBhUndefined;
+    }
+    if (resources.EXT_shader_io_blocks)
+    {
+        extBehavior[TExtension::EXT_shader_io_blocks] = EBhUndefined;
+    }
+    if (resources.EXT_gpu_shader5)
+    {
+        extBehavior[TExtension::EXT_gpu_shader5] = EBhUndefined;
+    }
+    if (resources.EXT_shader_non_constant_global_initializers)
+    {
+        extBehavior[TExtension::EXT_shader_non_constant_global_initializers] = EBhUndefined;
+    }
     if (resources.OES_texture_storage_multisample_2d_array)
     {
         extBehavior[TExtension::OES_texture_storage_multisample_2d_array] = EBhUndefined;
+    }
+    if (resources.OES_texture_3D)
+    {
+        extBehavior[TExtension::OES_texture_3D] = EBhUndefined;
+    }
+    if (resources.ANGLE_shader_pixel_local_storage)
+    {
+        extBehavior[TExtension::ANGLE_shader_pixel_local_storage] = EBhUndefined;
     }
     if (resources.ANGLE_texture_multisample)
     {
@@ -85,19 +133,89 @@ void InitExtensionBehavior(const ShBuiltInResources &resources, TExtensionBehavi
     {
         extBehavior[TExtension::ANGLE_multi_draw] = EBhUndefined;
     }
+    if (resources.ANGLE_base_vertex_base_instance_shader_builtin)
+    {
+        extBehavior[TExtension::ANGLE_base_vertex_base_instance_shader_builtin] = EBhUndefined;
+    }
+    if (resources.WEBGL_video_texture)
+    {
+        extBehavior[TExtension::WEBGL_video_texture] = EBhUndefined;
+    }
+    if (resources.APPLE_clip_distance)
+    {
+        extBehavior[TExtension::APPLE_clip_distance] = EBhUndefined;
+    }
+    if (resources.OES_texture_cube_map_array)
+    {
+        extBehavior[TExtension::OES_texture_cube_map_array] = EBhUndefined;
+    }
+    if (resources.EXT_texture_cube_map_array)
+    {
+        extBehavior[TExtension::EXT_texture_cube_map_array] = EBhUndefined;
+    }
+    if (resources.EXT_shadow_samplers)
+    {
+        extBehavior[TExtension::EXT_shadow_samplers] = EBhUndefined;
+    }
+    if (resources.OES_shader_multisample_interpolation)
+    {
+        extBehavior[TExtension::OES_shader_multisample_interpolation] = EBhUndefined;
+    }
+    if (resources.OES_shader_image_atomic)
+    {
+        extBehavior[TExtension::OES_shader_image_atomic] = EBhUndefined;
+    }
+    if (resources.EXT_tessellation_shader)
+    {
+        extBehavior[TExtension::EXT_tessellation_shader] = EBhUndefined;
+    }
+    if (resources.OES_texture_buffer)
+    {
+        extBehavior[TExtension::OES_texture_buffer] = EBhUndefined;
+    }
+    if (resources.EXT_texture_buffer)
+    {
+        extBehavior[TExtension::EXT_texture_buffer] = EBhUndefined;
+    }
+    if (resources.OES_sample_variables)
+    {
+        extBehavior[TExtension::OES_sample_variables] = EBhUndefined;
+    }
+    if (resources.EXT_clip_cull_distance)
+    {
+        extBehavior[TExtension::EXT_clip_cull_distance] = EBhUndefined;
+    }
+    if (resources.ANDROID_extension_pack_es31a)
+    {
+        extBehavior[TExtension::ANDROID_extension_pack_es31a] = EBhUndefined;
+    }
+    if (resources.KHR_blend_equation_advanced)
+    {
+        extBehavior[TExtension::KHR_blend_equation_advanced] = EBhUndefined;
+    }
 }
 
-void ResetExtensionBehavior(TExtensionBehavior &extBehavior)
+void ResetExtensionBehavior(const ShBuiltInResources &resources,
+                            TExtensionBehavior &extBehavior,
+                            const ShCompileOptions &compileOptions)
 {
     for (auto &ext : extBehavior)
     {
-        if (ext.first == TExtension::ARB_texture_rectangle)
+        ext.second = EBhUndefined;
+    }
+    if (resources.ARB_texture_rectangle)
+    {
+        if (compileOptions.disableARBTextureRectangle)
         {
-            ext.second = EBhEnable;
+            // Remove ARB_texture_rectangle so it can't be enabled by extension directives.
+            extBehavior.erase(TExtension::ARB_texture_rectangle);
         }
         else
         {
-            ext.second = EBhUndefined;
+            // Restore ARB_texture_rectangle in case it was removed during an earlier reset.  As
+            // noted above, it doesn't follow the standard for extension directives and is
+            // enabled by default.
+            extBehavior[TExtension::ARB_texture_rectangle] = EBhEnable;
         }
     }
 }

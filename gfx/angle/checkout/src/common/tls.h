@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2014 The ANGLE Project Authors. All rights reserved.
+// Copyright 2014 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -9,12 +9,22 @@
 #ifndef COMMON_TLS_H_
 #define COMMON_TLS_H_
 
+#include "common/angleutils.h"
 #include "common/platform.h"
+
+#ifdef ANGLE_PLATFORM_WINDOWS
+#    include <windows.h>
+#endif
+
+namespace gl
+{
+class Context;
+}
 
 #ifdef ANGLE_PLATFORM_WINDOWS
 
 // TLS does not exist for Windows Store and needs to be emulated
-#    ifdef ANGLE_ENABLE_WINDOWS_STORE
+#    ifdef ANGLE_ENABLE_WINDOWS_UWP
 #        ifndef TLS_OUT_OF_INDEXES
 #            define TLS_OUT_OF_INDEXES static_cast<DWORD>(0xFFFFFFFF)
 #        endif
@@ -34,10 +44,8 @@ typedef pthread_key_t TLSIndex;
 #    error Unsupported platform.
 #endif
 
-// TODO(kbr): for POSIX platforms this will have to be changed to take
-// in a destructor function pointer, to allow the thread-local storage
-// to be properly deallocated upon thread exit.
-TLSIndex CreateTLSIndex();
+using PthreadKeyDestructor = void (*)(void *);
+TLSIndex CreateTLSIndex(PthreadKeyDestructor destructor);
 bool DestroyTLSIndex(TLSIndex index);
 
 bool SetTLSValue(TLSIndex index, void *value);

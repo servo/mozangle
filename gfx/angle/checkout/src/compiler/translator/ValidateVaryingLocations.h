@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2002-2017 The ANGLE Project Authors. All rights reserved.
+// Copyright 2002 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -16,8 +16,11 @@ namespace sh
 {
 
 class TIntermBlock;
+class TIntermSymbol;
 class TDiagnostics;
+class TType;
 
+unsigned int CalculateVaryingLocationCount(const TType &varyingType, GLenum shaderType);
 bool ValidateVaryingLocations(TIntermBlock *root, TDiagnostics *diagnostics, GLenum shaderType);
 
 }  // namespace sh

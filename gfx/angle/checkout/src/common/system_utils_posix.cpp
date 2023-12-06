@@ -6,70 +6,98 @@
 
 // system_utils_posix.cpp: Implementation of POSIX OS-specific functions.
 
+#include "common/debug.h"
 #include "system_utils.h"
 
 #include <array>
+#include <iostream>
 
 #include <dlfcn.h>
+#include <grp.h>
+#include <inttypes.h>
+#include <pwd.h>
+#include <signal.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
-// On BSDs (including mac), environ is not declared anywhere:
-// https://stackoverflow.com/a/31347357/912144
-extern char **environ;
+#include "common/string_utils.h"
+
+#ifdef ANGLE_PLATFORM_FUCHSIA
+#    include <zircon/process.h>
+#    include <zircon/syscalls.h>
+#else
+#    include <sys/resource.h>
+#endif
 
 namespace angle
 {
 
 namespace
 {
-struct ScopedPipe
+std::string GetModulePath(void *moduleOrSymbol)
 {
-    ~ScopedPipe()
+    Dl_info dlInfo;
+    if (dladdr(moduleOrSymbol, &dlInfo) == 0)
     {
-        closeEndPoint(0);
-        closeEndPoint(1);
+        return "";
     }
-    void closeEndPoint(int index)
-    {
-        if (fds[index] >= 0)
-        {
-            close(fds[index]);
-            fds[index] = -1;
-        }
-    }
-    int fds[2] = {
-        -1,
-        -1,
-    };
-};
 
-void ReadEntireFile(int fd, std::string *out)
-{
-    out->clear();
-
-    while (true)
-    {
-        char buffer[256];
-        ssize_t bytesRead = read(fd, buffer, sizeof(buffer));
-
-        // If interrupted, retry.
-        if (bytesRead < 0 && errno == EINTR)
-        {
-            continue;
-        }
-
-        // If failed, or nothing to read, we are done.
-        if (bytesRead <= 0)
-        {
-            break;
-        }
-
-        out->append(buffer, bytesRead);
-    }
+    return dlInfo.dli_fname;
 }
-}  // anonymous namespace
+
+void *OpenPosixLibrary(const std::string &fullPath, int extraFlags, std::string *errorOut)
+{
+    void *module = dlopen(fullPath.c_str(), RTLD_NOW | extraFlags);
+    if (module)
+    {
+        if (errorOut)
+        {
+            *errorOut = fullPath;
+        }
+    }
+    else if (errorOut)
+    {
+        *errorOut = "dlopen(";
+        *errorOut += fullPath;
+        *errorOut += ") failed with error: ";
+        *errorOut += dlerror();
+        struct stat sfile;
+        if (-1 == stat(fullPath.c_str(), &sfile))
+        {
+            *errorOut += ", stat() call failed.";
+        }
+        else
+        {
+            *errorOut += ", stat() info: ";
+            struct passwd *pwuser = getpwuid(sfile.st_uid);
+            if (pwuser)
+            {
+                *errorOut += "owner: ";
+                *errorOut += pwuser->pw_name;
+                *errorOut += ", ";
+            }
+            struct group *grpnam = getgrgid(sfile.st_gid);
+            if (grpnam)
+            {
+                *errorOut += "group: ";
+                *errorOut += grpnam->gr_name;
+                *errorOut += ", ";
+            }
+            *errorOut += "perms: ";
+            *errorOut += std::to_string(sfile.st_mode);
+            *errorOut += ", links: ";
+            *errorOut += std::to_string(sfile.st_nlink);
+            *errorOut += ", size: ";
+            *errorOut += std::to_string(sfile.st_size);
+        }
+    }
+    return module;
+}
+}  // namespace
 
 Optional<std::string> GetCWD()
 {
@@ -103,156 +131,340 @@ std::string GetEnvironmentVar(const char *variableName)
     return (value == nullptr ? std::string() : std::string(value));
 }
 
-const char *GetPathSeparator()
+const char *GetPathSeparatorForEnvironmentVar()
 {
     return ":";
 }
 
-bool RunApp(const std::vector<const char *> &args,
-            std::string *stdoutOut,
-            std::string *stderrOut,
-            int *exitCodeOut)
+std::string GetModuleDirectoryAndGetError(std::string *errorOut)
 {
-    if (args.size() == 0 || args.back() != nullptr)
+    std::string directory;
+    static int placeholderSymbol = 0;
+    std::string moduleName       = GetModulePath(&placeholderSymbol);
+    if (!moduleName.empty())
     {
-        return false;
+        directory = moduleName.substr(0, moduleName.find_last_of('/') + 1);
     }
 
-    ScopedPipe stdoutPipe;
-    ScopedPipe stderrPipe;
-
-    // Create pipes for stdout and stderr.
-    if (stdoutOut && pipe(stdoutPipe.fds) != 0)
+    // Ensure we return the full path to the module, not the relative path
+    if (!IsFullPath(directory))
     {
-        return false;
-    }
-    if (stderrOut && pipe(stderrPipe.fds) != 0)
-    {
-        return false;
-    }
-
-    pid_t pid = fork();
-    if (pid < 0)
-    {
-        return false;
-    }
-
-    if (pid == 0)
-    {
-        // Child.  Execute the application.
-
-        // Redirect stdout and stderr to the pipe fds.
-        if (stdoutOut)
+        if (errorOut)
         {
-            if (dup2(stdoutPipe.fds[1], STDOUT_FILENO) < 0)
+            *errorOut += "Directory: '";
+            *errorOut += directory;
+            *errorOut += "' is not full path";
+        }
+        Optional<std::string> cwd = GetCWD();
+        if (cwd.valid())
+        {
+            directory = ConcatenatePath(cwd.value(), directory);
+            if (errorOut)
             {
-                _exit(errno);
+                *errorOut += ", so it has been modified to: '";
+                *errorOut += directory;
+                *errorOut += "'. ";
             }
         }
-        if (stderrOut)
+        else if (errorOut)
         {
-            if (dup2(stderrPipe.fds[1], STDERR_FILENO) < 0)
-            {
-                _exit(errno);
-            }
+            *errorOut += " and getcwd was invalid. ";
         }
-
-        // Execute the application, which doesn't return unless failed.  Note: execve takes argv as
-        // `char * const *` for historical reasons.  It is safe to const_cast it:
-        //
-        // http://pubs.opengroup.org/onlinepubs/9699919799/functions/exec.html
-        //
-        // > The statement about argv[] and envp[] being constants is included to make explicit to
-        // future writers of language bindings that these objects are completely constant. Due to a
-        // limitation of the ISO C standard, it is not possible to state that idea in standard C.
-        // Specifying two levels of const- qualification for the argv[] and envp[] parameters for
-        // the exec functions may seem to be the natural choice, given that these functions do not
-        // modify either the array of pointers or the characters to which the function points, but
-        // this would disallow existing correct code. Instead, only the array of pointers is noted
-        // as constant.
-        execve(args[0], const_cast<char *const *>(args.data()), environ);
-        _exit(errno);
     }
-
-    // Parent.  Read child output from the pipes and clean it up.
-
-    // Close the write end of the pipes, so EOF can be generated when child exits.
-    stdoutPipe.closeEndPoint(1);
-    stderrPipe.closeEndPoint(1);
-
-    // Read back the output of the child.
-    if (stdoutOut)
-    {
-        ReadEntireFile(stdoutPipe.fds[0], stdoutOut);
-    }
-    if (stderrOut)
-    {
-        ReadEntireFile(stderrPipe.fds[0], stderrOut);
-    }
-
-    // Cleanup the child.
-    int status = 0;
-    do
-    {
-        pid_t changedPid = waitpid(pid, &status, 0);
-        if (changedPid < 0 && errno == EINTR)
-        {
-            continue;
-        }
-        if (changedPid < 0)
-        {
-            return false;
-        }
-    } while (!WIFEXITED(status) && !WIFSIGNALED(status));
-
-    // Retrieve the error code.
-    if (exitCodeOut)
-    {
-        *exitCodeOut = WEXITSTATUS(status);
-    }
-
-    return true;
+    return directory;
 }
 
-class PosixLibrary : public Library
+std::string GetModuleDirectory()
+{
+    return GetModuleDirectoryAndGetError(nullptr);
+}
+
+void *OpenSystemLibraryWithExtensionAndGetError(const char *libraryName,
+                                                SearchType searchType,
+                                                std::string *errorOut)
+{
+    std::string directory;
+    if (searchType == SearchType::ModuleDir)
+    {
+#if ANGLE_PLATFORM_IOS
+        // On iOS, shared libraries must be loaded from within the app bundle.
+        directory = GetExecutableDirectory() + "/Frameworks/";
+#elif ANGLE_PLATFORM_FUCHSIA
+        // On Fuchsia the dynamic loader always looks up libraries in /pkg/lib
+        // and disallows loading of libraries via absolute paths.
+        directory = "";
+#else
+        directory = GetModuleDirectoryAndGetError(errorOut);
+#endif
+    }
+
+    int extraFlags = 0;
+    if (searchType == SearchType::AlreadyLoaded)
+    {
+        extraFlags = RTLD_NOLOAD;
+    }
+
+    std::string fullPath = directory + libraryName;
+    return OpenPosixLibrary(fullPath, extraFlags, errorOut);
+}
+
+void *GetLibrarySymbol(void *libraryHandle, const char *symbolName)
+{
+    if (!libraryHandle)
+    {
+        return nullptr;
+    }
+
+    return dlsym(libraryHandle, symbolName);
+}
+
+std::string GetLibraryPath(void *libraryHandle)
+{
+    if (!libraryHandle)
+    {
+        return "";
+    }
+
+    return GetModulePath(libraryHandle);
+}
+
+void CloseSystemLibrary(void *libraryHandle)
+{
+    if (libraryHandle)
+    {
+        dlclose(libraryHandle);
+    }
+}
+
+bool IsDirectory(const char *filename)
+{
+    struct stat st;
+    int result = stat(filename, &st);
+    return result == 0 && ((st.st_mode & S_IFDIR) == S_IFDIR);
+}
+
+bool IsDebuggerAttached()
+{
+    // This could have a fuller implementation.
+    // See https://cs.chromium.org/chromium/src/base/debug/debugger_posix.cc
+    return false;
+}
+
+void BreakDebugger()
+{
+    // This could have a fuller implementation.
+    // See https://cs.chromium.org/chromium/src/base/debug/debugger_posix.cc
+    abort();
+}
+
+const char *GetExecutableExtension()
+{
+    return "";
+}
+
+char GetPathSeparator()
+{
+    return '/';
+}
+
+std::string GetRootDirectory()
+{
+    return "/";
+}
+
+Optional<std::string> GetTempDirectory()
+{
+    const char *tmp = getenv("TMPDIR");
+    if (tmp != nullptr)
+    {
+        return std::string(tmp);
+    }
+
+#if defined(ANGLE_PLATFORM_ANDROID)
+    // Not used right now in the ANGLE test runner.
+    // return PathService::Get(DIR_CACHE, path);
+    return Optional<std::string>::Invalid();
+#else
+    return std::string("/tmp");
+#endif
+}
+
+Optional<std::string> CreateTemporaryFileInDirectory(const std::string &directory)
+{
+    std::string tempFileTemplate = directory + "/.angle.XXXXXX";
+
+    char tempFile[1000];
+    strcpy(tempFile, tempFileTemplate.c_str());
+
+    int fd = mkstemp(tempFile);
+    close(fd);
+
+    if (fd != -1)
+    {
+        return std::string(tempFile);
+    }
+
+    return Optional<std::string>::Invalid();
+}
+
+double GetCurrentProcessCpuTime()
+{
+#ifdef ANGLE_PLATFORM_FUCHSIA
+    static zx_handle_t me = zx_process_self();
+    zx_info_task_runtime_t task_runtime;
+    zx_object_get_info(me, ZX_INFO_TASK_RUNTIME, &task_runtime, sizeof(task_runtime), nullptr,
+                       nullptr);
+    return static_cast<double>(task_runtime.cpu_time) * 1e-9;
+#else
+    // We could also have used /proc/stat, but that requires us to read the
+    // filesystem and convert from jiffies. /proc/stat also relies on jiffies
+    // (lower resolution) while getrusage can potentially use a sched_clock()
+    // underneath that has higher resolution.
+    struct rusage usage;
+    getrusage(RUSAGE_SELF, &usage);
+    double userTime = usage.ru_utime.tv_sec + usage.ru_utime.tv_usec * 1e-6;
+    double systemTime = usage.ru_stime.tv_sec + usage.ru_stime.tv_usec * 1e-6;
+    return userTime + systemTime;
+#endif
+}
+
+namespace
+{
+bool SetMemoryProtection(uintptr_t start, size_t size, int protections)
+{
+    int ret = mprotect(reinterpret_cast<void *>(start), size, protections);
+    if (ret < 0)
+    {
+        perror("mprotect failed");
+    }
+    return ret == 0;
+}
+
+class PosixPageFaultHandler : public PageFaultHandler
 {
   public:
-    PosixLibrary(const char *libraryName)
-    {
-        char buffer[1000];
-        int ret = snprintf(buffer, 1000, "%s.%s", libraryName, GetSharedLibraryExtension());
-        if (ret > 0 && ret < 1000)
-        {
-            mModule = dlopen(buffer, RTLD_NOW);
-        }
-    }
+    PosixPageFaultHandler(PageFaultCallback callback) : PageFaultHandler(callback) {}
+    ~PosixPageFaultHandler() override {}
 
-    ~PosixLibrary() override
-    {
-        if (mModule)
-        {
-            dlclose(mModule);
-        }
-    }
-
-    void *getSymbol(const char *symbolName) override
-    {
-        if (!mModule)
-        {
-            return nullptr;
-        }
-
-        return dlsym(mModule, symbolName);
-    }
-
-    void *getNative() const override { return mModule; }
+    bool enable() override;
+    bool disable() override;
+    void handle(int sig, siginfo_t *info, void *unused);
 
   private:
-    void *mModule = nullptr;
+    struct sigaction mDefaultBusAction  = {};
+    struct sigaction mDefaultSegvAction = {};
 };
 
-Library *OpenSharedLibrary(const char *libraryName)
+PosixPageFaultHandler *gPosixPageFaultHandler = nullptr;
+void SegfaultHandlerFunction(int sig, siginfo_t *info, void *unused)
 {
-    return new PosixLibrary(libraryName);
+    gPosixPageFaultHandler->handle(sig, info, unused);
+}
+
+void PosixPageFaultHandler::handle(int sig, siginfo_t *info, void *unused)
+{
+    bool found = false;
+    if ((sig == SIGSEGV || sig == SIGBUS) &&
+        (info->si_code == SEGV_ACCERR || info->si_code == SEGV_MAPERR))
+    {
+        found = mCallback(reinterpret_cast<uintptr_t>(info->si_addr)) ==
+                PageFaultHandlerRangeType::InRange;
+    }
+
+    // Fall back to default signal handler
+    if (!found)
+    {
+        if (sig == SIGSEGV)
+        {
+            mDefaultSegvAction.sa_sigaction(sig, info, unused);
+        }
+        else if (sig == SIGBUS)
+        {
+            mDefaultBusAction.sa_sigaction(sig, info, unused);
+        }
+        else
+        {
+            UNREACHABLE();
+        }
+    }
+}
+
+bool PosixPageFaultHandler::disable()
+{
+    return sigaction(SIGSEGV, &mDefaultSegvAction, nullptr) == 0 &&
+           sigaction(SIGBUS, &mDefaultBusAction, nullptr) == 0;
+}
+
+bool PosixPageFaultHandler::enable()
+{
+    struct sigaction sigAction = {};
+    sigAction.sa_flags         = SA_SIGINFO;
+    sigAction.sa_sigaction     = &SegfaultHandlerFunction;
+    sigemptyset(&sigAction.sa_mask);
+
+    // Some POSIX implementations use SIGBUS for mprotect faults
+    return sigaction(SIGSEGV, &sigAction, &mDefaultSegvAction) == 0 &&
+           sigaction(SIGBUS, &sigAction, &mDefaultBusAction) == 0;
+}
+}  // namespace
+
+// Set write protection
+bool ProtectMemory(uintptr_t start, size_t size)
+{
+    return SetMemoryProtection(start, size, PROT_READ);
+}
+
+// Allow reading and writing
+bool UnprotectMemory(uintptr_t start, size_t size)
+{
+    return SetMemoryProtection(start, size, PROT_READ | PROT_WRITE);
+}
+
+size_t GetPageSize()
+{
+    long pageSize = sysconf(_SC_PAGE_SIZE);
+    if (pageSize < 0)
+    {
+        perror("Could not get sysconf page size");
+        return 0;
+    }
+    return static_cast<size_t>(pageSize);
+}
+
+PageFaultHandler *CreatePageFaultHandler(PageFaultCallback callback)
+{
+    gPosixPageFaultHandler = new PosixPageFaultHandler(callback);
+    return gPosixPageFaultHandler;
+}
+
+uint64_t GetProcessMemoryUsageKB()
+{
+    FILE *file = fopen("/proc/self/status", "r");
+
+    if (!file)
+    {
+        return 0;
+    }
+
+    const char *kSearchString           = "VmRSS:";
+    constexpr size_t kMaxLineSize       = 100;
+    std::array<char, kMaxLineSize> line = {};
+
+    uint64_t kb = 0;
+
+    while (fgets(line.data(), line.size(), file) != nullptr)
+    {
+        if (strncmp(line.data(), kSearchString, strlen(kSearchString)) == 0)
+        {
+            std::vector<std::string> strings;
+            SplitStringAlongWhitespace(line.data(), &strings);
+
+            sscanf(strings[1].c_str(), "%" SCNu64, &kb);
+            break;
+        }
+    }
+    fclose(file);
+
+    return kb;
 }
 }  // namespace angle

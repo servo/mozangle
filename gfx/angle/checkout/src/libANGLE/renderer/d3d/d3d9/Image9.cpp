@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2002-2012 The ANGLE Project Authors. All rights reserved.
+// Copyright 2002 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -66,12 +66,12 @@ angle::Result Image9::GenerateMip(Context9 *context9,
     const d3d9::D3DFormat &d3dFormatInfo = d3d9::GetD3DFormatInfo(sourceDesc.Format);
     ASSERT(d3dFormatInfo.info().mipGenerationFunction != nullptr);
 
-    D3DLOCKED_RECT sourceLocked = {0};
+    D3DLOCKED_RECT sourceLocked = {};
     result                      = sourceSurface->LockRect(&sourceLocked, nullptr, D3DLOCK_READONLY);
     ASSERT(SUCCEEDED(result));
     ANGLE_TRY_HR(context9, result, "Failed to lock the source surface for mipmap generation");
 
-    D3DLOCKED_RECT destLocked = {0};
+    D3DLOCKED_RECT destLocked = {};
     result                    = destSurface->LockRect(&destLocked, nullptr, 0);
     ASSERT(SUCCEEDED(result));
     ANGLE_TRY_HR(context9, result, "Failed to lock the destination surface for mipmap generation");
@@ -112,8 +112,8 @@ angle::Result Image9::CopyLockableSurfaces(Context9 *context9,
                                            IDirect3DSurface9 *dest,
                                            IDirect3DSurface9 *source)
 {
-    D3DLOCKED_RECT sourceLock = {0};
-    D3DLOCKED_RECT destLock   = {0};
+    D3DLOCKED_RECT sourceLock = {};
+    D3DLOCKED_RECT destLock   = {};
 
     HRESULT result;
 
@@ -182,12 +182,12 @@ angle::Result Image9::CopyImage(const gl::Context *context,
                  "Failed to query the destination surface description for CopyImage");
     const d3d9::D3DFormat &sourceD3DFormatInfo = d3d9::GetD3DFormatInfo(sourceDesc.Format);
 
-    D3DLOCKED_RECT sourceLocked = {0};
+    D3DLOCKED_RECT sourceLocked = {};
     result                      = sourceSurface->LockRect(&sourceLocked, nullptr, D3DLOCK_READONLY);
     ASSERT(SUCCEEDED(result));
     ANGLE_TRY_HR(context9, result, "Failed to lock the source surface for CopyImage");
 
-    D3DLOCKED_RECT destLocked = {0};
+    D3DLOCKED_RECT destLocked = {};
     result                    = destSurface->LockRect(&destLocked, nullptr, 0);
     ASSERT(SUCCEEDED(result));
     if (FAILED(result))
@@ -210,6 +210,8 @@ angle::Result Image9::CopyImage(const gl::Context *context,
                       gl::GetUnsizedFormat(dest->getInternalFormat()),
                       destD3DFormatInfo.info().componentType, sourceRect.width, sourceRect.height,
                       1, unpackFlipY, unpackPremultiplyAlpha, unpackUnmultiplyAlpha);
+
+    dest->markDirty();
 
     destSurface->UnlockRect();
     sourceSurface->UnlockRect();
@@ -587,12 +589,12 @@ angle::Result Image9::copyFromRTInternal(Context9 *context9,
     RECT sourceRect = {sourceArea.x, sourceArea.y, sourceArea.x + width, sourceArea.y + height};
     RECT destRect   = {destOffset.x, destOffset.y, destOffset.x + width, destOffset.y + height};
 
-    D3DLOCKED_RECT sourceLock = {0};
+    D3DLOCKED_RECT sourceLock = {};
     hr                        = renderTargetData->LockRect(&sourceLock, &sourceRect, 0);
 
     ANGLE_TRY_HR(context9, hr, "Failed to lock the source surface (rectangle might be invalid)");
 
-    D3DLOCKED_RECT destLock = {0};
+    D3DLOCKED_RECT destLock = {};
     angle::Result result    = lock(context9, &destLock, destRect);
     if (result == angle::Result::Stop)
     {
@@ -753,6 +755,119 @@ angle::Result Image9::copyFromRTInternal(Context9 *context9,
                     UNREACHABLE();
             }
             break;
+        case D3DFMT_A16B16G16R16F:
+            switch (getD3DFormat())
+            {
+                case D3DFMT_X8R8G8B8:
+                case D3DFMT_A8R8G8B8:
+                    for (int y = 0; y < height; y++)
+                    {
+                        const uint16_t *sourcePixels16F =
+                            reinterpret_cast<uint16_t *>(sourcePixels);
+                        for (int x = 0; x < width; x++)
+                        {
+                            float r = gl::float16ToFloat32(sourcePixels16F[x * 4 + 0]);
+                            float g = gl::float16ToFloat32(sourcePixels16F[x * 4 + 1]);
+                            float b = gl::float16ToFloat32(sourcePixels16F[x * 4 + 2]);
+                            float a = gl::float16ToFloat32(sourcePixels16F[x * 4 + 3]);
+                            destPixels[x * 4 + 0] = gl::floatToNormalized<uint8_t>(b);
+                            destPixels[x * 4 + 1] = gl::floatToNormalized<uint8_t>(g);
+                            destPixels[x * 4 + 2] = gl::floatToNormalized<uint8_t>(r);
+                            destPixels[x * 4 + 3] = gl::floatToNormalized<uint8_t>(a);
+                        }
+                        sourcePixels += sourceLock.Pitch;
+                        destPixels += destLock.Pitch;
+                    }
+                    break;
+                case D3DFMT_L8:
+                    for (int y = 0; y < height; y++)
+                    {
+                        const uint16_t *sourcePixels16F =
+                            reinterpret_cast<uint16_t *>(sourcePixels);
+                        for (int x = 0; x < width; x++)
+                        {
+                            float r       = gl::float16ToFloat32(sourcePixels16F[x * 4]);
+                            destPixels[x] = gl::floatToNormalized<uint8_t>(r);
+                        }
+                        sourcePixels += sourceLock.Pitch;
+                        destPixels += destLock.Pitch;
+                    }
+                    break;
+                case D3DFMT_A8L8:
+                    for (int y = 0; y < height; y++)
+                    {
+                        const uint16_t *sourcePixels16F =
+                            reinterpret_cast<uint16_t *>(sourcePixels);
+                        for (int x = 0; x < width; x++)
+                        {
+                            float r = gl::float16ToFloat32(sourcePixels16F[x * 4 + 0]);
+                            float a = gl::float16ToFloat32(sourcePixels16F[x * 4 + 3]);
+                            destPixels[x * 2 + 0] = gl::floatToNormalized<uint8_t>(r);
+                            destPixels[x * 2 + 1] = gl::floatToNormalized<uint8_t>(a);
+                        }
+                        sourcePixels += sourceLock.Pitch;
+                        destPixels += destLock.Pitch;
+                    }
+                    break;
+                default:
+                    UNREACHABLE();
+            }
+            break;
+        case D3DFMT_A32B32G32R32F:
+            switch (getD3DFormat())
+            {
+                case D3DFMT_X8R8G8B8:
+                case D3DFMT_A8R8G8B8:
+                    for (int y = 0; y < height; y++)
+                    {
+                        const float *sourcePixels32F = reinterpret_cast<float *>(sourcePixels);
+                        for (int x = 0; x < width; x++)
+                        {
+                            float r               = sourcePixels32F[x * 4 + 0];
+                            float g               = sourcePixels32F[x * 4 + 1];
+                            float b               = sourcePixels32F[x * 4 + 2];
+                            float a               = sourcePixels32F[x * 4 + 3];
+                            destPixels[x * 4 + 0] = gl::floatToNormalized<uint8_t>(b);
+                            destPixels[x * 4 + 1] = gl::floatToNormalized<uint8_t>(g);
+                            destPixels[x * 4 + 2] = gl::floatToNormalized<uint8_t>(r);
+                            destPixels[x * 4 + 3] = gl::floatToNormalized<uint8_t>(a);
+                        }
+                        sourcePixels += sourceLock.Pitch;
+                        destPixels += destLock.Pitch;
+                    }
+                    break;
+                case D3DFMT_L8:
+                    for (int y = 0; y < height; y++)
+                    {
+                        const float *sourcePixels32F = reinterpret_cast<float *>(sourcePixels);
+                        for (int x = 0; x < width; x++)
+                        {
+                            float r       = sourcePixels32F[x * 4];
+                            destPixels[x] = gl::floatToNormalized<uint8_t>(r);
+                        }
+                        sourcePixels += sourceLock.Pitch;
+                        destPixels += destLock.Pitch;
+                    }
+                    break;
+                case D3DFMT_A8L8:
+                    for (int y = 0; y < height; y++)
+                    {
+                        const float *sourcePixels32F = reinterpret_cast<float *>(sourcePixels);
+                        for (int x = 0; x < width; x++)
+                        {
+                            float r               = sourcePixels32F[x * 4 + 0];
+                            float a               = sourcePixels32F[x * 4 + 3];
+                            destPixels[x * 2 + 0] = gl::floatToNormalized<uint8_t>(r);
+                            destPixels[x * 2 + 1] = gl::floatToNormalized<uint8_t>(a);
+                        }
+                        sourcePixels += sourceLock.Pitch;
+                        destPixels += destLock.Pitch;
+                    }
+                    break;
+                default:
+                    UNREACHABLE();
+            }
+            break;
         default:
             UNREACHABLE();
     }
@@ -769,7 +884,7 @@ angle::Result Image9::copyFromTexStorage(const gl::Context *context,
                                          TextureStorage *source)
 {
     RenderTargetD3D *renderTarget = nullptr;
-    ANGLE_TRY(source->getRenderTarget(context, imageIndex, &renderTarget));
+    ANGLE_TRY(source->getRenderTarget(context, imageIndex, 0, &renderTarget));
 
     gl::Rectangle sourceArea(0, 0, mWidth, mHeight);
     return copyFromRTInternal(GetImplAs<Context9>(context), gl::Offset(), sourceArea, renderTarget);
@@ -780,11 +895,11 @@ angle::Result Image9::copyFromFramebuffer(const gl::Context *context,
                                           const gl::Rectangle &sourceArea,
                                           const gl::Framebuffer *source)
 {
-    const gl::FramebufferAttachment *srcAttachment = source->getReadColorbuffer();
+    const gl::FramebufferAttachment *srcAttachment = source->getReadColorAttachment();
     ASSERT(srcAttachment);
 
     RenderTargetD3D *renderTarget = nullptr;
-    ANGLE_TRY(srcAttachment->getRenderTarget(context, &renderTarget));
+    ANGLE_TRY(srcAttachment->getRenderTarget(context, 0, &renderTarget));
     ASSERT(renderTarget);
     return copyFromRTInternal(GetImplAs<Context9>(context), destOffset, sourceArea, renderTarget);
 }

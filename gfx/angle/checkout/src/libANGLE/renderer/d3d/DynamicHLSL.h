@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2014 The ANGLE Project Authors. All rights reserved.
+// Copyright 2014 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -23,7 +23,6 @@
 
 namespace sh
 {
-struct Attribute;
 struct ShaderVariable;
 }  // namespace sh
 
@@ -39,6 +38,7 @@ namespace rx
 {
 class ProgramD3DMetadata;
 class ShaderD3D;
+struct ShaderStorageBlock;
 
 // This class needs to match OutputHLSL::decorate
 class DecorateVariable final : angle::NonCopyable
@@ -80,7 +80,7 @@ struct PixelShaderOutputVariable
     std::string name;
     std::string source;
     size_t outputLocation = 0;
-    size_t outputIndex = 0;
+    size_t outputIndex    = 0;
 };
 
 struct BuiltinVarying final : private angle::NonCopyable
@@ -149,19 +149,26 @@ class DynamicHLSL : angle::NonCopyable
     std::string generateVertexShaderForInputLayout(
         const std::string &sourceShader,
         const gl::InputLayout &inputLayout,
-        const std::vector<sh::Attribute> &shaderAttributes) const;
+        const std::vector<sh::ShaderVariable> &shaderAttributes,
+        const std::vector<rx::ShaderStorageBlock> &shaderStorageBlocks,
+        size_t baseUAVRegister) const;
     std::string generatePixelShaderForOutputSignature(
         const std::string &sourceShader,
         const std::vector<PixelShaderOutputVariable> &outputVariables,
         bool usesFragDepth,
-        const std::vector<GLenum> &outputLayout) const;
-    std::string generateComputeShaderForImage2DBindSignature(
-        const d3d::Context *context,
+        const std::vector<GLenum> &outputLayout,
+        const std::vector<rx::ShaderStorageBlock> &shaderStorageBlocks,
+        size_t baseUAVRegister) const;
+    std::string generateShaderForImage2DBindSignature(
         ProgramD3D &programD3D,
         const gl::ProgramState &programData,
-        std::vector<sh::Uniform> &image2DUniforms,
-        const gl::ImageUnitTextureTypeMap &image2DBindLayout) const;
-    void generateShaderLinkHLSL(const gl::Caps &caps,
+        gl::ShaderType shaderType,
+        const std::string &shaderHLSL,
+        std::vector<sh::ShaderVariable> &image2DUniforms,
+        const gl::ImageUnitTextureTypeMap &image2DBindLayout,
+        unsigned int baseUAVRegister) const;
+    void generateShaderLinkHLSL(const gl::Context *context,
+                                const gl::Caps &caps,
                                 const gl::ProgramState &programData,
                                 const ProgramD3DMetadata &programMetadata,
                                 const gl::VaryingPacking &varyingPacking,

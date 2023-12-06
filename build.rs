@@ -7,6 +7,7 @@ extern crate walkdir;
 
 extern crate bindgen;
 
+use std::collections::HashSet;
 use std::env;
 #[cfg(feature = "egl")]
 use std::path::Path;
@@ -14,11 +15,12 @@ use std::path::PathBuf;
 
 use bindgen::Formatter;
 
+use crate::build_data::Libs;
+
 mod build_data;
 
 fn main() {
     let target = env::var("TARGET").unwrap();
-    let egl = env::var("CARGO_FEATURE_EGL").is_ok() && target.contains("windows");
 
     if cfg!(feature = "egl") && !target.contains("windows") {
         panic!("Do not know how to build EGL support for a non-Windows platform.");
@@ -28,39 +30,72 @@ fn main() {
         panic!("Do not know how to build DLLs for a non-Windows platform.");
     }
 
-    build_angle(&target, egl);
+    let mut compiled_libraries: HashSet<Libs> = HashSet::new();
 
-    #[cfg(feature = "egl")]
-    {
-        build_egl(&target);
-    }
-
-    #[cfg(feature = "egl")]
-    {
-        generate_bindings();
-    }
+    build_translator(&mut compiled_libraries, &target);
 
     #[cfg(feature = "build_dlls")]
     {
-        build_windows_dll(
-            &build_data::EGL,
-            "libEGL",
-            "gfx/angle/checkout/src/libEGL/libEGL.def",
-        );
+        for lib in build_data::GLESv2.use_libs {
+            build_lib(&mut compiled_libraries, &target, *lib);
+        }
         build_windows_dll(
             &build_data::GLESv2,
             "libGLESv2",
             "gfx/angle/checkout/src/libGLESv2/libGLESv2_autogen.def",
+        );
+        build_windows_dll(
+            &build_data::EGL,
+            "libEGL",
+            "gfx/angle/checkout/src/libEGL/libEGL_autogen.def",
+        );
+
+        let out = env::var("OUT_DIR").unwrap();
+        println!("cargo:rustc-link-search={out}");
+        println!("cargo:rustc-link-lib=libEGL");
+    }
+
+    #[cfg(feature = "egl")]
+    {
+        if !cfg!(feature = "build_dlls") {
+            build_lib(&mut compiled_libraries, &target, Libs::EGL);
+        }
+        generate_gl_bindings();
+    }
+
+    for entry in walkdir::WalkDir::new("gfx") {
+        let entry = entry.unwrap();
+        println!(
+            "{}",
+            format!("cargo:rerun-if-changed={}", entry.path().display())
         );
     }
 }
 
 #[cfg(feature = "build_dlls")]
 fn build_windows_dll(data: &build_data::Data, dll_name: &str, def_file: &str) {
+    println!("build_windows_dll: {dll_name}");
     let mut build = cc::Build::new();
+    build.cpp(true);
+    build.std("c++17");
     for &(k, v) in data.defines {
         build.define(k, v);
     }
+    // add zlib from libz-sys to include path
+    // See: https://doc.rust-lang.org/cargo/reference/build-script-examples.html#using-another-sys-crate
+    let zlib_link_arg = if let Ok(zlib_include_dir) = env::var("DEP_Z_INCLUDE") {
+        build.include(zlib_include_dir.replace("\\", "/"));
+        PathBuf::from(zlib_include_dir)
+            .parent()
+            .unwrap()
+            .join("lib")
+            .join("z.lib")
+            .as_path()
+            .display()
+            .to_string()
+    } else {
+        String::from("z.lib")
+    };
     build.define("ANGLE_USE_EGL_LOADER", None);
     build
         .flag_if_supported("/wd4100")
@@ -75,15 +110,26 @@ fn build_windows_dll(data: &build_data::Data, dll_name: &str, def_file: &str) {
     let out_string = env::var("OUT_DIR").unwrap();
     let out_path = Path::new(&out_string);
 
-    // Always include the base angle code.
-    cmd.arg(out_path.join("angle.lib"));
+    for lib in data.use_libs {
+        cmd.arg(out_path.join(format!("{}.lib", lib.to_data().lib)));
+    }
 
     for lib in data.os_libs {
         cmd.arg(&format!("{}.lib", lib));
     }
+    // also need to link zlib
+    cmd.arg(&zlib_link_arg);
 
-    for file in data.sources {
-        cmd.arg(fixup_path(file));
+    if dll_name == "libGLESv2" {
+        // transitive lib (that's the only case)
+        cmd.arg(out_path.join("preprocessor.lib"));
+        for file in data.sources {
+            cmd.arg(fixup_path(file));
+        }
+    } else {
+        for file in data.sources {
+            cmd.arg(fixup_path(file));
+        }
     }
 
     // Enable multiprocessing for faster builds.
@@ -104,11 +150,24 @@ fn build_windows_dll(data: &build_data::Data, dll_name: &str, def_file: &str) {
     assert!(status.unwrap().success());
 }
 
-#[cfg(feature = "egl")]
-fn build_egl(target: &str) {
+fn build_lib(compiled_libraries: &mut HashSet<Libs>, target: &String, lib: Libs) {
+    // Do not rebuild this library if it is already built.
+    if compiled_libraries.contains(&lib) {
+        return;
+    }
+
+    println!("build_lib: {lib:?}");
+    let data = lib.to_data();
+    for dep_lib in data.use_libs {
+        build_lib(compiled_libraries, target, *dep_lib);
+    }
+    let repo = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
+    env::set_current_dir(repo).unwrap();
+
     let mut build = cc::Build::new();
 
-    let data = build_data::EGL;
+    build.cpp(true).std("c++17").warnings(false);
+
     for &(k, v) in data.defines {
         build.define(k, v);
     }
@@ -121,14 +180,49 @@ fn build_egl(target: &str) {
         build.include(fixup_path(file));
     }
 
+    // add zlib from libz-sys to include path
+    // See: https://doc.rust-lang.org/cargo/reference/build-script-examples.html#using-another-sys-crate
+    if let Ok(zlib_include_dir) = env::var("DEP_Z_INCLUDE") {
+        build.include(zlib_include_dir.replace("\\", "/"));
+    }
+
     for file in data.sources {
         build.file(fixup_path(file));
     }
 
-    if target.contains("x86_64") || target.contains("i686") {
-        build
-            .flag_if_supported("-msse2") // GNU
-            .flag_if_supported("-arch:SSE2"); // MSVC
+    if matches!(lib, Libs::ANGLE_COMMON) {
+        // These platform-specific files are added conditionally in moz.build files
+        // `if CONFIG['OS_ARCH'] == 'Darwin':`
+        for &(os, sources) in &[
+            (
+                "darwin",
+                &[
+                    "gfx/angle/checkout/src/common/system_utils_mac.cpp",
+                    "gfx/angle/checkout/src/common/system_utils_posix.cpp",
+                ][..],
+            ),
+            (
+                "linux",
+                &[
+                    "gfx/angle/checkout/src/common/system_utils_linux.cpp",
+                    "gfx/angle/checkout/src/common/system_utils_posix.cpp",
+                ][..],
+            ),
+            (
+                "windows",
+                &[
+                    "gfx/angle/checkout/src/common/system_utils_win.cpp",
+                    "gfx/angle/checkout/src/common/system_utils_win32.cpp",
+                ][..],
+            ),
+        ] {
+            if target.contains(os) {
+                for source in sources {
+                    build.file(source);
+                }
+                break;
+            }
+        }
     }
 
     build
@@ -136,24 +230,40 @@ fn build_egl(target: &str) {
         .flag_if_supported("/wd4127")
         .flag_if_supported("/wd9002");
 
-    build.link_lib_modifier("-whole-archive");
+    if target.contains("x86_64") || target.contains("i686") {
+        build
+            .flag_if_supported("-msse2") // GNU
+            .flag_if_supported("-arch:SSE2"); // MSVC
+    }
 
-    // Build lib.
-    build.compile("EGL");
+    // Enable multiprocessing for faster builds.
+    build.flag_if_supported("/MP");
+
+    // we want all symbols as they are for consumers (are shared libs)
+    if data.shared {
+        build.link_lib_modifier("-bundle");
+        build.link_lib_modifier("+whole-archive");
+    }
+
+    build.compile(data.lib);
+
+    for lib in data.os_libs {
+        println!("cargo:rustc-link-lib={}", lib);
+    }
+
+    compiled_libraries.insert(lib);
 }
 
-fn build_angle(target: &String, egl: bool) {
-    let data = if egl {
-        build_data::ANGLE
-    } else {
-        build_data::TRANSLATOR
-    };
+fn build_translator(compiled_libraries: &mut HashSet<Libs>, target: &String) {
+    println!("build_translator");
+    build_lib(compiled_libraries, target, Libs::TRANSLATOR);
+    let data = build_data::TRANSLATOR;
 
     let repo = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
     env::set_current_dir(repo).unwrap();
 
     // common clang args
-    let mut clang_args = vec![String::from("-std=c++14")];
+    let mut clang_args = vec![];
 
     for &(k, v) in data.defines {
         if let Some(v) = v {
@@ -168,41 +278,7 @@ fn build_angle(target: &String, egl: bool) {
         clang_args.push(fixup_path(file));
     }
 
-    // Change to one of the directory that contains moz.build
     let mut build = cc::Build::new();
-
-    for file in data.sources {
-        build.file(fixup_path(file));
-    }
-
-    // Hard-code lines like `if CONFIG['OS_ARCH'] == 'Darwin':` in moz.build files
-    for &(os, sources) in &[
-        (
-            "darwin",
-            &[
-                "gfx/angle/checkout/src/common/system_utils_mac.cpp",
-                "gfx/angle/checkout/src/common/system_utils_posix.cpp",
-            ][..],
-        ),
-        (
-            "linux",
-            &[
-                "gfx/angle/checkout/src/common/system_utils_linux.cpp",
-                "gfx/angle/checkout/src/common/system_utils_posix.cpp",
-            ][..],
-        ),
-        (
-            "windows",
-            &["gfx/angle/checkout/src/common/system_utils_win.cpp"][..],
-        ),
-    ] {
-        if target.contains(os) {
-            for source in sources {
-                build.file(source);
-            }
-            break;
-        }
-    }
 
     for flag in &clang_args {
         build.flag(flag);
@@ -211,6 +287,7 @@ fn build_angle(target: &String, egl: bool) {
     build
         .file("src/shaders/glslang-c.cpp")
         .cpp(true)
+        .std("c++17")
         .warnings(false)
         .flag_if_supported("/wd4100")
         .flag_if_supported("/wd4127")
@@ -224,7 +301,7 @@ fn build_angle(target: &String, egl: bool) {
 
     build.link_lib_modifier("-whole-archive");
 
-    build.compile("angle");
+    build.compile("glslang_glue");
 
     // now generate bindings
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
@@ -240,7 +317,8 @@ fn build_angle(target: &String, egl: bool) {
         .clang_args(clang_args)
         // ensure cxx
         .clang_arg("-x")
-        .clang_arg("c++");
+        .clang_arg("c++")
+        .clang_arg("-std=c++17");
 
     if target.contains("x86_64") || target.contains("i686") {
         builder = builder.clang_arg("-msse2")
@@ -253,21 +331,10 @@ fn build_angle(target: &String, egl: bool) {
     builder
         .generate()
         .expect("Should generate shader bindings")
-        .write_to_file(out_dir.join("angle_bindings.rs"))
+        .write_to_file(out_dir.join("glslang_glue_bindings.rs"))
         .expect("Should write bindings to file");
 
-
-    for lib in data.os_libs {
-        println!("cargo:rustc-link-lib={}", lib);
-    }
     println!("cargo:rerun-if-changed=src/shaders/glslang-c.cpp");
-    for entry in walkdir::WalkDir::new("gfx") {
-        let entry = entry.unwrap();
-        println!(
-            "{}",
-            format!("cargo:rerun-if-changed={}", entry.path().display())
-        );
-    }
 }
 
 const ALLOWLIST_FN: &'static [&'static str] = &[
@@ -286,6 +353,7 @@ const ALLOWLIST_FN: &'static [&'static str] = &[
     "GLSLangGetNumUnpackedVaryingVectors",
 ];
 
+/// Make a path relative to the working directory that is used for the build.
 fn fixup_path(path: &str) -> String {
     let prefix = "../../";
     assert!(path.starts_with(prefix));
@@ -293,14 +361,10 @@ fn fixup_path(path: &str) -> String {
 }
 
 #[cfg(feature = "egl")]
-fn generate_bindings() {
+fn generate_gl_bindings() {
+    println!("generate_gl_bindings");
     use gl_generator::{Api, Fallbacks, Profile, Registry};
     use std::fs::File;
-
-    let target = env::var("TARGET").unwrap();
-    if !target.contains("windows") {
-        return;
-    }
 
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
 

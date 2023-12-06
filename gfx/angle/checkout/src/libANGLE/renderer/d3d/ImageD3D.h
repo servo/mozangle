@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2002-2015 The ANGLE Project Authors. All rights reserved.
+// Copyright 2002 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -15,16 +15,13 @@
 
 #include "common/PackedEnums.h"
 #include "libANGLE/Error.h"
+#include "libANGLE/angletypes.h"
 
 namespace gl
 {
 class Context;
 class Framebuffer;
 class ImageIndex;
-struct Box;
-struct Extents;
-struct Offset;
-struct Rectangle;
 struct PixelUnpackState;
 }  // namespace gl
 

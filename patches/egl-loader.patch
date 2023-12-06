@@ -1,32 +1,25 @@
 diff --git a/gfx/angle/targets/libEGL/moz.build b/gfx/angle/targets/libEGL/moz.build
-index c16b620..99c8adf 100644
+index 9327db4..390eb73 100644
 --- a/gfx/angle/targets/libEGL/moz.build
 +++ b/gfx/angle/targets/libEGL/moz.build
-@@ -6,7 +6,7 @@ include('../../moz.build.common')
- DEFINES['ANGLE_ENABLE_DEBUG_ANNOTATIONS'] = True
- DEFINES['ANGLE_GLESV2_LIBRARY_NAME'] = '"libGLESv2"'
- #DEFINES['ANGLE_IS_64_BIT_CPU'] = True
--DEFINES['ANGLE_USE_EGL_LOADER'] = True
-+#DEFINES['ANGLE_USE_EGL_LOADER'] = True
- #DEFINES['CERT_CHAIN_PARA_HAS_EXTRA_FIELDS'] = True
- #DEFINES['CHROMIUM_BUILD'] = True
- #DEFINES['COMPONENT_BUILD'] = True
-@@ -179,4 +179,4 @@ OS_LIBS += [
- 
- DEFFILE = '../../checkout/src/libEGL/libEGL.def'
- RCFILE = '../../checkout/src/libEGL/libEGL.rc'
--GeckoSharedLibrary('libEGL', linkage=None)
-\ No newline at end of file
-+GeckoSharedLibrary('libEGL', linkage=None)
+@@ -7,7 +7,7 @@ DEFINES["ANGLE_DISABLE_POOL_ALLOC"] = True
+ DEFINES["ANGLE_ENABLE_SHARE_CONTEXT_LOCK"] = "1"
+ DEFINES["ANGLE_GLESV2_LIBRARY_NAME"] = '"libGLESv2"'
+ # DEFINES["ANGLE_IS_WIN"] = True
+-DEFINES["ANGLE_USE_EGL_LOADER"] = True
++# DEFINES["ANGLE_USE_EGL_LOADER"] = True
+ DEFINES["ANGLE_VMA_VERSION"] = "2003000"
+ # DEFINES["CERT_CHAIN_PARA_HAS_EXTRA_FIELDS"] = True
+ DEFINES["CR_CLANG_REVISION"] = '"llvmorg-16-init-6578-g0d30e92f-2"'
 diff --git a/gfx/angle/update-angle.py b/gfx/angle/update-angle.py
-index a1e677d..1e0df7e 100644
+index 57714e4..0b78c3b 100755
 --- a/gfx/angle/update-angle.py
 +++ b/gfx/angle/update-angle.py
-@@ -353,7 +353,6 @@ REGISTERED_DEFINES = {
-     'ANGLE_GLESV2_LIBRARY_NAME': True,
-     'ANGLE_IS_64_BIT_CPU': False,
-     'ANGLE_PRELOADED_D3DCOMPILER_MODULE_NAMES': False,
--    'ANGLE_USE_EGL_LOADER': True,
-     'CERT_CHAIN_PARA_HAS_EXTRA_FIELDS': False,
-     'CHROMIUM_BUILD': False,
-     'COMPONENT_BUILD': False,
+@@ -270,7 +270,6 @@ REGISTERED_DEFINES = {
+     "ANGLE_PRELOADED_D3DCOMPILER_MODULE_NAMES": False,
+     "ANGLE_SHARED_LIBVULKAN": True,
+     "ANGLE_USE_CUSTOM_LIBVULKAN": True,
+-    "ANGLE_USE_EGL_LOADER": True,
+     "ANGLE_VK_LAYERS_DIR": True,
+     "ANGLE_VK_MOCK_ICD_JSON": True,
+     "ANGLE_VMA_VERSION": True,

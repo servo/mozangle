@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2014 The ANGLE Project Authors. All rights reserved.
+// Copyright 2014 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -37,7 +37,7 @@ RendererD3D::RendererD3D(egl::Display *display)
     : mDisplay(display),
       mPresentPathFastEnabled(false),
       mCapsInitialized(false),
-      mWorkaroundsInitialized(false),
+      mFeaturesInitialized(false),
       mDisjoint(false),
       mDeviceLost(false)
 {}
@@ -72,7 +72,7 @@ bool RendererD3D::skipDraw(const gl::State &glState, gl::PrimitiveMode drawMode)
     return false;
 }
 
-GLenum RendererD3D::getResetStatus()
+gl::GraphicsResetStatus RendererD3D::getResetStatus()
 {
     if (!mDeviceLost)
     {
@@ -80,37 +80,22 @@ GLenum RendererD3D::getResetStatus()
         {
             mDeviceLost = true;
             notifyDeviceLost();
-            return GL_UNKNOWN_CONTEXT_RESET_EXT;
+            return gl::GraphicsResetStatus::UnknownContextReset;
         }
-        return GL_NO_ERROR;
+        return gl::GraphicsResetStatus::NoError;
     }
 
     if (testDeviceResettable())
     {
-        return GL_NO_ERROR;
+        return gl::GraphicsResetStatus::NoError;
     }
 
-    return GL_UNKNOWN_CONTEXT_RESET_EXT;
+    return gl::GraphicsResetStatus::UnknownContextReset;
 }
 
 void RendererD3D::notifyDeviceLost()
 {
     mDisplay->notifyDeviceLost();
-}
-
-std::string RendererD3D::getVendorString() const
-{
-    LUID adapterLuid = {0};
-
-    if (getLUID(&adapterLuid))
-    {
-        char adapterLuidString[64];
-        sprintf_s(adapterLuidString, sizeof(adapterLuidString), "(adapter LUID: %08x%08x)",
-                  adapterLuid.HighPart, adapterLuid.LowPart);
-        return std::string(adapterLuidString);
-    }
-
-    return std::string("");
 }
 
 void RendererD3D::setGPUDisjoint()
@@ -167,6 +152,16 @@ const gl::Limitations &RendererD3D::getNativeLimitations() const
     return mNativeLimitations;
 }
 
+ShPixelLocalStorageType RendererD3D::getNativePixelLocalStorageType() const
+{
+    if (!getNativeExtensions().shaderPixelLocalStorageANGLE)
+    {
+        return ShPixelLocalStorageType::NotSupported;
+    }
+    // Read/write UAVs only support "r32*" images.
+    return ShPixelLocalStorageType::ImageStoreR32PackedFormats;
+}
+
 Serial RendererD3D::generateSerial()
 {
     return mSerialFactory.generate();
@@ -182,6 +177,17 @@ angle::Result RendererD3D::initRenderTarget(const gl::Context *context,
                                             RenderTargetD3D *renderTarget)
 {
     return clearRenderTarget(context, renderTarget, gl::ColorF(0, 0, 0, 0), 1, 0);
+}
+
+const angle::FeaturesD3D &RendererD3D::getFeatures() const
+{
+    if (!mFeaturesInitialized)
+    {
+        initializeFeatures(&mFeatures);
+        mFeaturesInitialized = true;
+    }
+
+    return mFeatures;
 }
 
 unsigned int GetBlendSampleMask(const gl::State &glState, int samples)
@@ -229,7 +235,9 @@ GLenum DefaultGLErrorCode(HRESULT hr)
 {
     switch (hr)
     {
+#ifdef ANGLE_ENABLE_D3D9
         case D3DERR_OUTOFVIDEOMEMORY:
+#endif
         case E_OUTOFMEMORY:
             return GL_OUT_OF_MEMORY;
         default:

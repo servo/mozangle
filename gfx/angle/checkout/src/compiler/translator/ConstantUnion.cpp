@@ -9,6 +9,7 @@
 
 #include "common/mathutil.h"
 #include "compiler/translator/Diagnostics.h"
+#include "compiler/translator/util.h"
 
 namespace sh
 {
@@ -66,11 +67,15 @@ bool IsValidShiftOffset(const TConstantUnion &rhs)
 
 }  // anonymous namespace
 
-TConstantUnion::TConstantUnion()
-{
-    iConst = 0;
-    type   = EbtVoid;
-}
+TConstantUnion::TConstantUnion() : iConst(0), type(EbtVoid) {}
+
+TConstantUnion::TConstantUnion(int i) : iConst(i), type(EbtInt) {}
+
+TConstantUnion::TConstantUnion(unsigned int u) : uConst(u), type(EbtUInt) {}
+
+TConstantUnion::TConstantUnion(float f) : fConst(f), type(EbtFloat) {}
+
+TConstantUnion::TConstantUnion(bool b) : bConst(b), type(EbtBool) {}
 
 int TConstantUnion::getIConst() const
 {
@@ -86,14 +91,39 @@ unsigned int TConstantUnion::getUConst() const
 
 float TConstantUnion::getFConst() const
 {
-    ASSERT(type == EbtFloat);
-    return fConst;
+    switch (type)
+    {
+        case EbtInt:
+            return static_cast<float>(iConst);
+        case EbtUInt:
+            return static_cast<float>(uConst);
+        default:
+            ASSERT(type == EbtFloat);
+            return fConst;
+    }
 }
 
 bool TConstantUnion::getBConst() const
 {
     ASSERT(type == EbtBool);
     return bConst;
+}
+
+bool TConstantUnion::isZero() const
+{
+    switch (type)
+    {
+        case EbtInt:
+            return getIConst() == 0;
+        case EbtUInt:
+            return getUConst() == 0;
+        case EbtFloat:
+            return getFConst() == 0.0f;
+        case EbtBool:
+            return getBConst() == false;
+        default:
+            return false;
+    }
 }
 
 TYuvCscStandardEXT TConstantUnion::getYuvCscStandardEXTConst() const
@@ -210,6 +240,16 @@ bool TConstantUnion::cast(TBasicType newType, const TConstantUnion &constant)
                     return false;
             }
             break;
+        case EbtYuvCscStandardEXT:
+            switch (constant.type)
+            {
+                case EbtYuvCscStandardEXT:
+                    setYuvCscStandardEXTConst(constant.getYuvCscStandardEXTConst());
+                    break;
+                default:
+                    return false;
+            }
+            break;
         default:
             return false;
     }
@@ -219,17 +259,37 @@ bool TConstantUnion::cast(TBasicType newType, const TConstantUnion &constant)
 
 bool TConstantUnion::operator==(const int i) const
 {
-    return i == iConst;
+    switch (type)
+    {
+        case EbtFloat:
+            return static_cast<float>(i) == fConst;
+        default:
+            return i == iConst;
+    }
 }
 
 bool TConstantUnion::operator==(const unsigned int u) const
 {
-    return u == uConst;
+    switch (type)
+    {
+        case EbtFloat:
+            return static_cast<float>(u) == fConst;
+        default:
+            return u == uConst;
+    }
 }
 
 bool TConstantUnion::operator==(const float f) const
 {
-    return f == fConst;
+    switch (type)
+    {
+        case EbtInt:
+            return f == static_cast<float>(iConst);
+        case EbtUInt:
+            return f == static_cast<float>(uConst);
+        default:
+            return f == fConst;
+    }
 }
 
 bool TConstantUnion::operator==(const bool b) const
@@ -244,23 +304,32 @@ bool TConstantUnion::operator==(const TYuvCscStandardEXT s) const
 
 bool TConstantUnion::operator==(const TConstantUnion &constant) const
 {
-    if (constant.type != type)
-        return false;
-
-    switch (type)
+    ImplicitTypeConversion conversion = GetConversion(constant.type, type);
+    if (conversion == ImplicitTypeConversion::Same)
     {
-        case EbtInt:
-            return constant.iConst == iConst;
-        case EbtUInt:
-            return constant.uConst == uConst;
-        case EbtFloat:
-            return constant.fConst == fConst;
-        case EbtBool:
-            return constant.bConst == bConst;
-        case EbtYuvCscStandardEXT:
-            return constant.yuvCscStandardEXTConst == yuvCscStandardEXTConst;
-        default:
-            return false;
+        switch (type)
+        {
+            case EbtInt:
+                return constant.iConst == iConst;
+            case EbtUInt:
+                return constant.uConst == uConst;
+            case EbtFloat:
+                return constant.fConst == fConst;
+            case EbtBool:
+                return constant.bConst == bConst;
+            case EbtYuvCscStandardEXT:
+                return constant.yuvCscStandardEXTConst == yuvCscStandardEXTConst;
+            default:
+                return false;
+        }
+    }
+    else if (conversion == ImplicitTypeConversion::Invalid)
+    {
+        return false;
+    }
+    else
+    {
+        return constant.getFConst() == getFConst();
     }
 }
 
@@ -296,33 +365,50 @@ bool TConstantUnion::operator!=(const TConstantUnion &constant) const
 
 bool TConstantUnion::operator>(const TConstantUnion &constant) const
 {
-    ASSERT(type == constant.type);
-    switch (type)
+
+    ImplicitTypeConversion conversion = GetConversion(constant.type, type);
+    if (conversion == ImplicitTypeConversion::Same)
     {
-        case EbtInt:
-            return iConst > constant.iConst;
-        case EbtUInt:
-            return uConst > constant.uConst;
-        case EbtFloat:
-            return fConst > constant.fConst;
-        default:
-            return false;  // Invalid operation, handled at semantic analysis
+        switch (type)
+        {
+            case EbtInt:
+                return iConst > constant.iConst;
+            case EbtUInt:
+                return uConst > constant.uConst;
+            case EbtFloat:
+                return fConst > constant.fConst;
+            default:
+                return false;  // Invalid operation, handled at semantic analysis
+        }
+    }
+    else
+    {
+        ASSERT(conversion != ImplicitTypeConversion::Invalid);
+        return getFConst() > constant.getFConst();
     }
 }
 
 bool TConstantUnion::operator<(const TConstantUnion &constant) const
 {
-    ASSERT(type == constant.type);
-    switch (type)
+    ImplicitTypeConversion conversion = GetConversion(constant.type, type);
+    if (conversion == ImplicitTypeConversion::Same)
     {
-        case EbtInt:
-            return iConst < constant.iConst;
-        case EbtUInt:
-            return uConst < constant.uConst;
-        case EbtFloat:
-            return fConst < constant.fConst;
-        default:
-            return false;  // Invalid operation, handled at semantic analysis
+        switch (type)
+        {
+            case EbtInt:
+                return iConst < constant.iConst;
+            case EbtUInt:
+                return uConst < constant.uConst;
+            case EbtFloat:
+                return fConst < constant.fConst;
+            default:
+                return false;  // Invalid operation, handled at semantic analysis
+        }
+    }
+    else
+    {
+        ASSERT(conversion != ImplicitTypeConversion::Invalid);
+        return getFConst() < constant.getFConst();
     }
 }
 
@@ -333,20 +419,29 @@ TConstantUnion TConstantUnion::add(const TConstantUnion &lhs,
                                    const TSourceLoc &line)
 {
     TConstantUnion returnValue;
-    ASSERT(lhs.type == rhs.type);
-    switch (lhs.type)
+
+    ImplicitTypeConversion conversion = GetConversion(lhs.type, rhs.type);
+    if (conversion == ImplicitTypeConversion::Same)
     {
-        case EbtInt:
-            returnValue.setIConst(gl::WrappingSum<int>(lhs.iConst, rhs.iConst));
-            break;
-        case EbtUInt:
-            returnValue.setUConst(gl::WrappingSum<unsigned int>(lhs.uConst, rhs.uConst));
-            break;
-        case EbtFloat:
-            returnValue.setFConst(CheckedSum(lhs.fConst, rhs.fConst, diag, line));
-            break;
-        default:
-            UNREACHABLE();
+        switch (lhs.type)
+        {
+            case EbtInt:
+                returnValue.setIConst(gl::WrappingSum<int>(lhs.iConst, rhs.iConst));
+                break;
+            case EbtUInt:
+                returnValue.setUConst(gl::WrappingSum<unsigned int>(lhs.uConst, rhs.uConst));
+                break;
+            case EbtFloat:
+                returnValue.setFConst(CheckedSum(lhs.fConst, rhs.fConst, diag, line));
+                break;
+            default:
+                UNREACHABLE();
+        }
+    }
+    else
+    {
+        ASSERT(conversion != ImplicitTypeConversion::Invalid);
+        returnValue.setFConst(CheckedSum(lhs.getFConst(), rhs.getFConst(), diag, line));
     }
 
     return returnValue;
@@ -359,20 +454,29 @@ TConstantUnion TConstantUnion::sub(const TConstantUnion &lhs,
                                    const TSourceLoc &line)
 {
     TConstantUnion returnValue;
-    ASSERT(lhs.type == rhs.type);
-    switch (lhs.type)
+
+    ImplicitTypeConversion conversion = GetConversion(lhs.type, rhs.type);
+    if (conversion == ImplicitTypeConversion::Same)
     {
-        case EbtInt:
-            returnValue.setIConst(gl::WrappingDiff<int>(lhs.iConst, rhs.iConst));
-            break;
-        case EbtUInt:
-            returnValue.setUConst(gl::WrappingDiff<unsigned int>(lhs.uConst, rhs.uConst));
-            break;
-        case EbtFloat:
-            returnValue.setFConst(CheckedDiff(lhs.fConst, rhs.fConst, diag, line));
-            break;
-        default:
-            UNREACHABLE();
+        switch (lhs.type)
+        {
+            case EbtInt:
+                returnValue.setIConst(gl::WrappingDiff<int>(lhs.iConst, rhs.iConst));
+                break;
+            case EbtUInt:
+                returnValue.setUConst(gl::WrappingDiff<unsigned int>(lhs.uConst, rhs.uConst));
+                break;
+            case EbtFloat:
+                returnValue.setFConst(CheckedDiff(lhs.fConst, rhs.fConst, diag, line));
+                break;
+            default:
+                UNREACHABLE();
+        }
+    }
+    else
+    {
+        ASSERT(conversion != ImplicitTypeConversion::Invalid);
+        returnValue.setFConst(CheckedDiff(lhs.getFConst(), rhs.getFConst(), diag, line));
     }
 
     return returnValue;
@@ -385,22 +489,31 @@ TConstantUnion TConstantUnion::mul(const TConstantUnion &lhs,
                                    const TSourceLoc &line)
 {
     TConstantUnion returnValue;
-    ASSERT(lhs.type == rhs.type);
-    switch (lhs.type)
+
+    ImplicitTypeConversion conversion = GetConversion(lhs.type, rhs.type);
+    if (conversion == ImplicitTypeConversion::Same)
     {
-        case EbtInt:
-            returnValue.setIConst(gl::WrappingMul(lhs.iConst, rhs.iConst));
-            break;
-        case EbtUInt:
-            // Unsigned integer math in C++ is defined to be done in modulo 2^n, so we rely on that
-            // to implement wrapping multiplication.
-            returnValue.setUConst(lhs.uConst * rhs.uConst);
-            break;
-        case EbtFloat:
-            returnValue.setFConst(CheckedMul(lhs.fConst, rhs.fConst, diag, line));
-            break;
-        default:
-            UNREACHABLE();
+        switch (lhs.type)
+        {
+            case EbtInt:
+                returnValue.setIConst(gl::WrappingMul(lhs.iConst, rhs.iConst));
+                break;
+            case EbtUInt:
+                // Unsigned integer math in C++ is defined to be done in modulo 2^n, so we rely
+                // on that to implement wrapping multiplication.
+                returnValue.setUConst(lhs.uConst * rhs.uConst);
+                break;
+            case EbtFloat:
+                returnValue.setFConst(CheckedMul(lhs.fConst, rhs.fConst, diag, line));
+                break;
+            default:
+                UNREACHABLE();
+        }
+    }
+    else
+    {
+        ASSERT(conversion != ImplicitTypeConversion::Invalid);
+        returnValue.setFConst(CheckedMul(lhs.getFConst(), rhs.getFConst(), diag, line));
     }
 
     return returnValue;

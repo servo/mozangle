@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2012-2013 The ANGLE Project Authors. All rights reserved.
+// Copyright 2012 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -34,9 +34,32 @@ class Renderer11;
 class SwapChain11;
 class Image11;
 struct Renderer11DeviceCaps;
+class TextureStorage11_2DMultisample;
 
 template <typename T>
 using CubeFaceArray = std::array<T, gl::kCubeFaceCount>;
+
+struct MultisampledRenderToTextureInfo
+{
+    MultisampledRenderToTextureInfo(const GLsizei samples,
+                                    const gl::ImageIndex &indexSS,
+                                    const gl::ImageIndex &indexMS);
+    ~MultisampledRenderToTextureInfo();
+
+    // How many samples the multisampled texture contains
+    GLsizei samples;
+    // This is the image index for the single sampled texture
+    // This will hold the relevant level information
+    gl::ImageIndex indexSS;
+    // This is the image index for the multisampled texture
+    // For multisampled indexes, there is no level Index since they should
+    // account for the entire level.
+    gl::ImageIndex indexMS;
+    // True when multisampled texture has been written to and needs to be
+    // resolved to the single sampled texture
+    bool msTextureNeedsResolve;
+    std::unique_ptr<TextureStorage11_2DMultisample> msTex;
+};
 
 class TextureStorage11 : public TextureStorage
 {
@@ -45,10 +68,10 @@ class TextureStorage11 : public TextureStorage
 
     static DWORD GetTextureBindFlags(GLenum internalFormat,
                                      const Renderer11DeviceCaps &renderer11DeviceCaps,
-                                     bool renderTarget);
+                                     BindFlags flags);
     static DWORD GetTextureMiscFlags(GLenum internalFormat,
                                      const Renderer11DeviceCaps &renderer11DeviceCaps,
-                                     bool renderTarget,
+                                     BindFlags flags,
                                      int levels);
 
     UINT getBindFlags() const;
@@ -59,7 +82,7 @@ class TextureStorage11 : public TextureStorage
                                GLint maxLevel,
                                const d3d11::SharedSRV **outSRV);
     angle::Result generateSwizzles(const gl::Context *context,
-                                   const gl::SwizzleState &swizzleTarget);
+                                   const gl::TextureState &textureState);
     void markLevelDirty(int mipLevel);
     void markDirty();
 
@@ -81,6 +104,7 @@ class TextureStorage11 : public TextureStorage
     bool isManaged() const override;
     bool supportsNativeMipmapFunction() const override;
     int getLevelCount() const override;
+    bool isUnorderedAccess() const override { return mBindFlags & D3D11_BIND_UNORDERED_ACCESS; }
     angle::Result generateMipmap(const gl::Context *context,
                                  const gl::ImageIndex &sourceIndex,
                                  const gl::ImageIndex &destIndex) override;
@@ -92,6 +116,7 @@ class TextureStorage11 : public TextureStorage
                           GLenum type,
                           const gl::PixelUnpackState &unpack,
                           const uint8_t *pixelData) override;
+    void invalidateTextures() override;
 
     virtual angle::Result getSRVForSampler(const gl::Context *context,
                                            const gl::TextureState &textureState,
@@ -116,8 +141,14 @@ class TextureStorage11 : public TextureStorage
                                                  const gl::ImageIndex &index,
                                                  Image11 *incomingImage)                = 0;
 
+    GLsizei getRenderToTextureSamples() const override;
+
   protected:
-    TextureStorage11(Renderer11 *renderer, UINT bindFlags, UINT miscFlags, GLenum internalFormat);
+    TextureStorage11(Renderer11 *renderer,
+                     UINT bindFlags,
+                     UINT miscFlags,
+                     GLenum internalFormat,
+                     const std::string &label);
     int getLevelWidth(int mipLevel) const;
     int getLevelHeight(int mipLevel) const;
     int getLevelDepth(int mipLevel) const;
@@ -131,9 +162,16 @@ class TextureStorage11 : public TextureStorage
     virtual angle::Result getSwizzleRenderTarget(const gl::Context *context,
                                                  int mipLevel,
                                                  const d3d11::RenderTargetView **outRTV) = 0;
+
+    enum class SRVType
+    {
+        Sample,
+        Blit,
+        Stencil
+    };
     angle::Result getSRVLevel(const gl::Context *context,
                               int mipLevel,
-                              bool blitSRV,
+                              SRVType srvType,
                               const d3d11::SharedSRV **outSRV);
 
     // Get a version of a depth texture with only depth information, not stencil.
@@ -170,6 +208,18 @@ class TextureStorage11 : public TextureStorage
     // Clear all cached non-swizzle SRVs and invalidate the swizzle cache.
     void clearSRVCache();
 
+    // Helper for resolving MS shadowed texture
+    angle::Result resolveTextureHelper(const gl::Context *context, const TextureHelper11 &texture);
+    angle::Result releaseMultisampledTexStorageForLevel(size_t level) override;
+    angle::Result findMultisampledRenderTarget(const gl::Context *context,
+                                               const gl::ImageIndex &index,
+                                               GLsizei samples,
+                                               RenderTargetD3D **outRT) const;
+    angle::Result getMultisampledRenderTarget(const gl::Context *context,
+                                              const gl::ImageIndex &index,
+                                              GLsizei samples,
+                                              RenderTargetD3D **outRT);
+
     Renderer11 *mRenderer;
     int mTopLevel;
     unsigned int mMipLevels;
@@ -181,6 +231,8 @@ class TextureStorage11 : public TextureStorage
 
     gl::TexLevelArray<gl::SwizzleState> mSwizzleCache;
     TextureHelper11 mDropStencilTexture;
+
+    std::unique_ptr<MultisampledRenderToTextureInfo> mMSTexInfo;
 
   private:
     const UINT mBindFlags;
@@ -232,18 +284,20 @@ class TextureStorage11 : public TextureStorage
 
     gl::TexLevelArray<d3d11::SharedSRV> mLevelSRVs;
     gl::TexLevelArray<d3d11::SharedSRV> mLevelBlitSRVs;
+    gl::TexLevelArray<d3d11::SharedSRV> mLevelStencilSRVs;
 };
 
 class TextureStorage11_2D : public TextureStorage11
 {
   public:
-    TextureStorage11_2D(Renderer11 *renderer, SwapChain11 *swapchain);
+    TextureStorage11_2D(Renderer11 *renderer, SwapChain11 *swapchain, const std::string &label);
     TextureStorage11_2D(Renderer11 *renderer,
                         GLenum internalformat,
-                        bool renderTarget,
+                        BindFlags bindFlags,
                         GLsizei width,
                         GLsizei height,
                         int levels,
+                        const std::string &label,
                         bool hintLevelZeroOnly = false);
     ~TextureStorage11_2D() override;
 
@@ -253,8 +307,13 @@ class TextureStorage11_2D : public TextureStorage11
                               const TextureHelper11 **outResource) override;
     angle::Result getMippedResource(const gl::Context *context,
                                     const TextureHelper11 **outResource) override;
+    angle::Result findRenderTarget(const gl::Context *context,
+                                   const gl::ImageIndex &index,
+                                   GLsizei samples,
+                                   RenderTargetD3D **outRT) const override;
     angle::Result getRenderTarget(const gl::Context *context,
                                   const gl::ImageIndex &index,
+                                  GLsizei samples,
                                   RenderTargetD3D **outRT) override;
 
     angle::Result copyToStorage(const gl::Context *context, TextureStorage *destStorage) override;
@@ -268,6 +327,7 @@ class TextureStorage11_2D : public TextureStorage11
 
     angle::Result useLevelZeroWorkaroundTexture(const gl::Context *context,
                                                 bool useLevelZeroTexture) override;
+    void onLabelUpdate() override;
 
   protected:
     angle::Result getSwizzleTexture(const gl::Context *context,
@@ -280,6 +340,8 @@ class TextureStorage11_2D : public TextureStorage11
                                            DropStencil *dropStencilOut) override;
 
     angle::Result ensureTextureExists(const gl::Context *context, int mipLevels);
+
+    angle::Result resolveTexture(const gl::Context *context) override;
 
   private:
     angle::Result createSRVForSampler(const gl::Context *context,
@@ -330,7 +392,8 @@ class TextureStorage11_External : public TextureStorage11
   public:
     TextureStorage11_External(Renderer11 *renderer,
                               egl::Stream *stream,
-                              const egl::Stream::GLTextureDescription &glDesc);
+                              const egl::Stream::GLTextureDescription &glDesc,
+                              const std::string &label);
     ~TextureStorage11_External() override;
 
     angle::Result onDestroy(const gl::Context *context) override;
@@ -339,8 +402,13 @@ class TextureStorage11_External : public TextureStorage11
                               const TextureHelper11 **outResource) override;
     angle::Result getMippedResource(const gl::Context *context,
                                     const TextureHelper11 **outResource) override;
+    angle::Result findRenderTarget(const gl::Context *context,
+                                   const gl::ImageIndex &index,
+                                   GLsizei samples,
+                                   RenderTargetD3D **outRT) const override;
     angle::Result getRenderTarget(const gl::Context *context,
                                   const gl::ImageIndex &index,
+                                  GLsizei samples,
                                   RenderTargetD3D **outRT) override;
 
     angle::Result copyToStorage(const gl::Context *context, TextureStorage *destStorage) override;
@@ -351,6 +419,7 @@ class TextureStorage11_External : public TextureStorage11
     angle::Result releaseAssociatedImage(const gl::Context *context,
                                          const gl::ImageIndex &index,
                                          Image11 *incomingImage) override;
+    void onLabelUpdate() override;
 
   protected:
     angle::Result getSwizzleTexture(const gl::Context *context,
@@ -392,7 +461,8 @@ class TextureStorage11ImmutableBase : public TextureStorage11
     TextureStorage11ImmutableBase(Renderer11 *renderer,
                                   UINT bindFlags,
                                   UINT miscFlags,
-                                  GLenum internalFormat);
+                                  GLenum internalFormat,
+                                  const std::string &label);
 
     void associateImage(Image11 *image, const gl::ImageIndex &index) override;
     void disassociateImage(const gl::ImageIndex &index, Image11 *expectedImage) override;
@@ -418,7 +488,8 @@ class TextureStorage11_EGLImage final : public TextureStorage11ImmutableBase
   public:
     TextureStorage11_EGLImage(Renderer11 *renderer,
                               EGLImageD3D *eglImage,
-                              RenderTarget11 *renderTarget11);
+                              RenderTarget11 *renderTarget11,
+                              const std::string &label);
     ~TextureStorage11_EGLImage() override;
 
     angle::Result getSubresourceIndex(const gl::Context *context,
@@ -432,14 +503,20 @@ class TextureStorage11_EGLImage final : public TextureStorage11ImmutableBase
                                    const d3d11::SharedSRV **outSRV) override;
     angle::Result getMippedResource(const gl::Context *context,
                                     const TextureHelper11 **outResource) override;
+    angle::Result findRenderTarget(const gl::Context *context,
+                                   const gl::ImageIndex &index,
+                                   GLsizei samples,
+                                   RenderTargetD3D **outRT) const override;
     angle::Result getRenderTarget(const gl::Context *context,
                                   const gl::ImageIndex &index,
+                                  GLsizei samples,
                                   RenderTargetD3D **outRT) override;
 
     angle::Result copyToStorage(const gl::Context *context, TextureStorage *destStorage) override;
 
     angle::Result useLevelZeroWorkaroundTexture(const gl::Context *context,
                                                 bool useLevelZeroTexture) override;
+    void onLabelUpdate() override;
 
   protected:
     angle::Result getSwizzleTexture(const gl::Context *context,
@@ -475,10 +552,11 @@ class TextureStorage11_Cube : public TextureStorage11
   public:
     TextureStorage11_Cube(Renderer11 *renderer,
                           GLenum internalformat,
-                          bool renderTarget,
+                          BindFlags bindFlags,
                           int size,
                           int levels,
-                          bool hintLevelZeroOnly);
+                          bool hintLevelZeroOnly,
+                          const std::string &label);
     ~TextureStorage11_Cube() override;
 
     angle::Result onDestroy(const gl::Context *context) override;
@@ -491,8 +569,13 @@ class TextureStorage11_Cube : public TextureStorage11
                               const TextureHelper11 **outResource) override;
     angle::Result getMippedResource(const gl::Context *context,
                                     const TextureHelper11 **outResource) override;
+    angle::Result findRenderTarget(const gl::Context *context,
+                                   const gl::ImageIndex &index,
+                                   GLsizei samples,
+                                   RenderTargetD3D **outRT) const override;
     angle::Result getRenderTarget(const gl::Context *context,
                                   const gl::ImageIndex &index,
+                                  GLsizei samples,
                                   RenderTargetD3D **outRT) override;
 
     angle::Result copyToStorage(const gl::Context *context, TextureStorage *destStorage) override;
@@ -506,6 +589,7 @@ class TextureStorage11_Cube : public TextureStorage11
 
     angle::Result useLevelZeroWorkaroundTexture(const gl::Context *context,
                                                 bool useLevelZeroTexture) override;
+    void onLabelUpdate() override;
 
   protected:
     angle::Result getSwizzleTexture(const gl::Context *context,
@@ -518,6 +602,8 @@ class TextureStorage11_Cube : public TextureStorage11
                                            DropStencil *dropStencilOut) override;
 
     angle::Result ensureTextureExists(const gl::Context *context, int mipLevels);
+
+    angle::Result resolveTexture(const gl::Context *context) override;
 
   private:
     angle::Result createSRVForSampler(const gl::Context *context,
@@ -562,11 +648,12 @@ class TextureStorage11_3D : public TextureStorage11
   public:
     TextureStorage11_3D(Renderer11 *renderer,
                         GLenum internalformat,
-                        bool renderTarget,
+                        BindFlags bindFlags,
                         GLsizei width,
                         GLsizei height,
                         GLsizei depth,
-                        int levels);
+                        int levels,
+                        const std::string &label);
     ~TextureStorage11_3D() override;
 
     angle::Result onDestroy(const gl::Context *context) override;
@@ -575,8 +662,13 @@ class TextureStorage11_3D : public TextureStorage11
                               const TextureHelper11 **outResource) override;
 
     // Handles both layer and non-layer RTs
+    angle::Result findRenderTarget(const gl::Context *context,
+                                   const gl::ImageIndex &index,
+                                   GLsizei samples,
+                                   RenderTargetD3D **outRT) const override;
     angle::Result getRenderTarget(const gl::Context *context,
                                   const gl::ImageIndex &index,
+                                  GLsizei samples,
                                   RenderTargetD3D **outRT) override;
 
     void associateImage(Image11 *image, const gl::ImageIndex &index) override;
@@ -585,6 +677,7 @@ class TextureStorage11_3D : public TextureStorage11
     angle::Result releaseAssociatedImage(const gl::Context *context,
                                          const gl::ImageIndex &index,
                                          Image11 *incomingImage) override;
+    void onLabelUpdate() override;
 
   protected:
     angle::Result getSwizzleTexture(const gl::Context *context,
@@ -628,19 +721,25 @@ class TextureStorage11_2DArray : public TextureStorage11
   public:
     TextureStorage11_2DArray(Renderer11 *renderer,
                              GLenum internalformat,
-                             bool renderTarget,
+                             BindFlags bindFlags,
                              GLsizei width,
                              GLsizei height,
                              GLsizei depth,
-                             int levels);
+                             int levels,
+                             const std::string &label);
     ~TextureStorage11_2DArray() override;
 
     angle::Result onDestroy(const gl::Context *context) override;
 
     angle::Result getResource(const gl::Context *context,
                               const TextureHelper11 **outResource) override;
+    angle::Result findRenderTarget(const gl::Context *context,
+                                   const gl::ImageIndex &index,
+                                   GLsizei samples,
+                                   RenderTargetD3D **outRT) const override;
     angle::Result getRenderTarget(const gl::Context *context,
                                   const gl::ImageIndex &index,
+                                  GLsizei samples,
                                   RenderTargetD3D **outRT) override;
 
     void associateImage(Image11 *image, const gl::ImageIndex &index) override;
@@ -649,6 +748,7 @@ class TextureStorage11_2DArray : public TextureStorage11
     angle::Result releaseAssociatedImage(const gl::Context *context,
                                          const gl::ImageIndex &index,
                                          Image11 *incomingImage) override;
+    void onLabelUpdate() override;
 
     struct LevelLayerRangeKey
     {
@@ -725,18 +825,25 @@ class TextureStorage11_2DMultisample final : public TextureStorage11ImmutableBas
                                    GLsizei height,
                                    int levels,
                                    int samples,
-                                   bool fixedSampleLocations);
+                                   bool fixedSampleLocations,
+                                   const std::string &label);
     ~TextureStorage11_2DMultisample() override;
 
     angle::Result onDestroy(const gl::Context *context) override;
 
     angle::Result getResource(const gl::Context *context,
                               const TextureHelper11 **outResource) override;
+    angle::Result findRenderTarget(const gl::Context *context,
+                                   const gl::ImageIndex &index,
+                                   GLsizei samples,
+                                   RenderTargetD3D **outRT) const override;
     angle::Result getRenderTarget(const gl::Context *context,
                                   const gl::ImageIndex &index,
+                                  GLsizei samples,
                                   RenderTargetD3D **outRT) override;
 
     angle::Result copyToStorage(const gl::Context *context, TextureStorage *destStorage) override;
+    void onLabelUpdate() override;
 
   protected:
     angle::Result getSwizzleTexture(const gl::Context *context,
@@ -775,18 +882,25 @@ class TextureStorage11_2DMultisampleArray final : public TextureStorage11Immutab
                                         GLsizei depth,
                                         int levels,
                                         int samples,
-                                        bool fixedSampleLocations);
+                                        bool fixedSampleLocations,
+                                        const std::string &label);
     ~TextureStorage11_2DMultisampleArray() override;
 
     angle::Result onDestroy(const gl::Context *context) override;
 
     angle::Result getResource(const gl::Context *context,
                               const TextureHelper11 **outResource) override;
+    angle::Result findRenderTarget(const gl::Context *context,
+                                   const gl::ImageIndex &index,
+                                   GLsizei samples,
+                                   RenderTargetD3D **outRT) const override;
     angle::Result getRenderTarget(const gl::Context *context,
                                   const gl::ImageIndex &index,
+                                  GLsizei samples,
                                   RenderTargetD3D **outRT) override;
 
     angle::Result copyToStorage(const gl::Context *context, TextureStorage *destStorage) override;
+    void onLabelUpdate() override;
 
   protected:
     angle::Result getSwizzleTexture(const gl::Context *context,
@@ -820,6 +934,69 @@ class TextureStorage11_2DMultisampleArray final : public TextureStorage11Immutab
 
     unsigned int mSamples;
     GLboolean mFixedSampleLocations;
+};
+
+class TextureStorage11_Buffer : public TextureStorage11
+{
+  public:
+    TextureStorage11_Buffer(Renderer11 *renderer,
+                            const gl::OffsetBindingPointer<gl::Buffer> &buffer,
+                            GLenum internalFormat,
+                            const std::string &label);
+    ~TextureStorage11_Buffer() override;
+
+    angle::Result getResource(const gl::Context *context,
+                              const TextureHelper11 **outResource) override;
+    angle::Result getMippedResource(const gl::Context *context,
+                                    const TextureHelper11 **outResource) override;
+    angle::Result findRenderTarget(const gl::Context *context,
+                                   const gl::ImageIndex &index,
+                                   GLsizei samples,
+                                   RenderTargetD3D **outRT) const override;
+    angle::Result getRenderTarget(const gl::Context *context,
+                                  const gl::ImageIndex &index,
+                                  GLsizei samples,
+                                  RenderTargetD3D **outRT) override;
+
+    void onLabelUpdate() override;
+
+    void associateImage(Image11 *image, const gl::ImageIndex &index) override;
+    void disassociateImage(const gl::ImageIndex &index, Image11 *expectedImage) override;
+    void verifyAssociatedImageValid(const gl::ImageIndex &index, Image11 *expectedImage) override;
+    angle::Result releaseAssociatedImage(const gl::Context *context,
+                                         const gl::ImageIndex &index,
+                                         Image11 *incomingImage) override;
+
+  protected:
+    angle::Result getSwizzleTexture(const gl::Context *context,
+                                    const TextureHelper11 **outTexture) override;
+    angle::Result getSwizzleRenderTarget(const gl::Context *context,
+                                         int mipLevel,
+                                         const d3d11::RenderTargetView **outRTV) override;
+
+  private:
+    angle::Result createSRVForSampler(const gl::Context *context,
+                                      int baseLevel,
+                                      int mipLevels,
+                                      DXGI_FORMAT format,
+                                      const TextureHelper11 &texture,
+                                      d3d11::SharedSRV *outSRV) override;
+    angle::Result createSRVForImage(const gl::Context *context,
+                                    int level,
+                                    DXGI_FORMAT format,
+                                    const TextureHelper11 &texture,
+                                    d3d11::SharedSRV *outSRV) override;
+    angle::Result createUAVForImage(const gl::Context *context,
+                                    int level,
+                                    DXGI_FORMAT format,
+                                    const TextureHelper11 &texture,
+                                    d3d11::SharedUAV *outUAV) override;
+
+    angle::Result initTexture(const gl::Context *context);
+
+    TextureHelper11 mTexture;
+    const gl::OffsetBindingPointer<gl::Buffer> &mBuffer;
+    GLint64 mDataSize;
 };
 }  // namespace rx
 

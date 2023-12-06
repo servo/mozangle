@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2002-2012 The ANGLE Project Authors. All rights reserved.
+// Copyright 2002 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -96,14 +96,15 @@ angle::Result VertexBufferInterface::getSpaceRequired(const gl::Context *context
                                                       const gl::VertexBinding &binding,
                                                       size_t count,
                                                       GLsizei instances,
+                                                      GLuint baseInstance,
                                                       unsigned int *spaceInBytesOut) const
 {
     unsigned int spaceRequired = 0;
     ANGLE_TRY(mFactory->getVertexSpaceRequired(context, attrib, binding, count, instances,
-                                               &spaceRequired));
+                                               baseInstance, &spaceRequired));
 
     // Align to 16-byte boundary
-    unsigned int alignedSpaceRequired = roundUp(spaceRequired, 16u);
+    unsigned int alignedSpaceRequired = roundUpPow2(spaceRequired, 16u);
     ANGLE_CHECK_GL_ALLOC(GetImplAs<ContextD3D>(context), alignedSpaceRequired >= spaceRequired);
 
     *spaceInBytesOut = alignedSpaceRequired;
@@ -159,6 +160,7 @@ angle::Result StreamingVertexBufferInterface::reserveSpace(const gl::Context *co
         mWritePosition = 0;
     }
 
+    mReservedSpace = size;
     return angle::Result::Continue;
 }
 
@@ -170,22 +172,34 @@ angle::Result StreamingVertexBufferInterface::storeDynamicAttribute(
     GLint start,
     size_t count,
     GLsizei instances,
+    GLuint baseInstance,
     unsigned int *outStreamOffset,
     const uint8_t *sourceData)
 {
     unsigned int spaceRequired = 0;
-    ANGLE_TRY(getSpaceRequired(context, attrib, binding, count, instances, &spaceRequired));
+    ANGLE_TRY(
+        getSpaceRequired(context, attrib, binding, count, instances, baseInstance, &spaceRequired));
 
     // Protect against integer overflow
     angle::CheckedNumeric<unsigned int> checkedPosition(mWritePosition);
     checkedPosition += spaceRequired;
     ANGLE_CHECK_GL_ALLOC(GetImplAs<ContextD3D>(context), checkedPosition.IsValid());
 
-    ANGLE_TRY(reserveSpace(context, mReservedSpace));
     mReservedSpace = 0;
 
+    size_t adjustedCount = count;
+    GLuint divisor       = binding.getDivisor();
+
+    if (instances != 0 && divisor != 0)
+    {
+        // The attribute is an instanced attribute and it's an draw instance call
+        // Extra number of elements are copied at the beginning to make sure
+        // the driver is referencing the correct data with non-zero baseInstance
+        adjustedCount += UnsignedCeilDivide(baseInstance, divisor);
+    }
+
     ANGLE_TRY(mVertexBuffer->storeVertexAttributes(context, attrib, binding, currentValueType,
-                                                   start, count, instances, mWritePosition,
+                                                   start, adjustedCount, instances, mWritePosition,
                                                    sourceData));
 
     if (outStreamOffset)
@@ -202,11 +216,12 @@ angle::Result StreamingVertexBufferInterface::reserveVertexSpace(const gl::Conte
                                                                  const gl::VertexAttribute &attrib,
                                                                  const gl::VertexBinding &binding,
                                                                  size_t count,
-                                                                 GLsizei instances)
+                                                                 GLsizei instances,
+                                                                 GLuint baseInstance)
 {
     unsigned int requiredSpace = 0;
     ANGLE_TRY(mFactory->getVertexSpaceRequired(context, attrib, binding, count, instances,
-                                               &requiredSpace));
+                                               baseInstance, &requiredSpace));
 
     // Align to 16-byte boundary
     auto alignedRequiredSpace = rx::CheckedRoundUp(requiredSpace, 16u);
@@ -215,19 +230,14 @@ angle::Result StreamingVertexBufferInterface::reserveVertexSpace(const gl::Conte
     // Protect against integer overflow
     ANGLE_CHECK_GL_ALLOC(GetImplAs<ContextD3D>(context), alignedRequiredSpace.IsValid());
 
-    mReservedSpace = alignedRequiredSpace.ValueOrDie();
+    ANGLE_TRY(reserveSpace(context, alignedRequiredSpace.ValueOrDie()));
 
     return angle::Result::Continue;
 }
 
 // StaticVertexBufferInterface Implementation
 StaticVertexBufferInterface::AttributeSignature::AttributeSignature()
-    : type(gl::VertexAttribType::InvalidEnum),
-      size(0),
-      stride(0),
-      normalized(false),
-      pureInteger(false),
-      offset(0)
+    : formatID(angle::FormatID::NONE), stride(0), offset(0)
 {}
 
 bool StaticVertexBufferInterface::AttributeSignature::matchesAttribute(
@@ -236,8 +246,7 @@ bool StaticVertexBufferInterface::AttributeSignature::matchesAttribute(
 {
     size_t attribStride = ComputeVertexAttributeStride(attrib, binding);
 
-    if (type != attrib.type || size != attrib.size || static_cast<GLuint>(stride) != attribStride ||
-        normalized != attrib.normalized || pureInteger != attrib.pureInteger)
+    if (formatID != attrib.format->id || static_cast<GLuint>(stride) != attribStride)
     {
         return false;
     }
@@ -250,10 +259,7 @@ bool StaticVertexBufferInterface::AttributeSignature::matchesAttribute(
 void StaticVertexBufferInterface::AttributeSignature::set(const gl::VertexAttribute &attrib,
                                                           const gl::VertexBinding &binding)
 {
-    type        = attrib.type;
-    size        = attrib.size;
-    normalized  = attrib.normalized;
-    pureInteger = attrib.pureInteger;
+    formatID = attrib.format->id;
     offset = stride = static_cast<GLuint>(ComputeVertexAttributeStride(attrib, binding));
     offset          = static_cast<size_t>(ComputeVertexAttributeOffset(attrib, binding)) %
              ComputeVertexAttributeStride(attrib, binding);
@@ -286,7 +292,7 @@ angle::Result StaticVertexBufferInterface::storeStaticAttribute(const gl::Contex
                                                                 const uint8_t *sourceData)
 {
     unsigned int spaceRequired = 0;
-    ANGLE_TRY(getSpaceRequired(context, attrib, binding, count, instances, &spaceRequired));
+    ANGLE_TRY(getSpaceRequired(context, attrib, binding, count, instances, 0, &spaceRequired));
     ANGLE_TRY(setBufferSize(context, spaceRequired));
 
     ASSERT(attrib.enabled);

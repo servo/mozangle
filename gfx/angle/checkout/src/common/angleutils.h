@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2002-2014 The ANGLE Project Authors. All rights reserved.
+// Copyright 2002 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -11,12 +11,25 @@
 
 #include "common/platform.h"
 
+#if defined(ANGLE_USE_ABSEIL)
+#    include "absl/container/flat_hash_map.h"
+#    include "absl/container/flat_hash_set.h"
+#endif  // defined(ANGLE_USE_ABSEIL)
+
+#if defined(ANGLE_WITH_LSAN)
+#    include <sanitizer/lsan_interface.h>
+#endif  // defined(ANGLE_WITH_LSAN)
+
 #include <climits>
 #include <cstdarg>
 #include <cstddef>
+#include <fstream>
+#include <mutex>
 #include <set>
 #include <sstream>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 // A helper class to disallow copy and assignment operators
@@ -27,6 +40,18 @@ namespace angle
 using Microsoft::WRL::ComPtr;
 #endif  // defined(ANGLE_ENABLE_D3D9) || defined(ANGLE_ENABLE_D3D11)
 
+#if defined(ANGLE_USE_ABSEIL)
+template <typename Key, typename T, class Hash = absl::container_internal::hash_default_hash<Key>>
+using HashMap = absl::flat_hash_map<Key, T, Hash>;
+template <typename Key, class Hash = absl::container_internal::hash_default_hash<Key>>
+using HashSet = absl::flat_hash_set<Key, Hash>;
+#else
+template <typename Key, typename T, class Hash = std::hash<Key>>
+using HashMap = std::unordered_map<Key, T, Hash>;
+template <typename Key, class Hash = std::hash<Key>>
+using HashSet = std::unordered_set<Key, Hash>;
+#endif  // defined(ANGLE_USE_ABSEIL)
+
 class NonCopyable
 {
   protected:
@@ -34,11 +59,144 @@ class NonCopyable
     ~NonCopyable()          = default;
 
   private:
-    NonCopyable(const NonCopyable &) = delete;
+    NonCopyable(const NonCopyable &)    = delete;
     void operator=(const NonCopyable &) = delete;
 };
 
 extern const uintptr_t DirtyPointer;
+
+struct SaveFileHelper
+{
+  public:
+    // We always use ios::binary to avoid inconsistent line endings when captured on Linux vs Win.
+    SaveFileHelper(const std::string &filePathIn);
+    ~SaveFileHelper();
+
+    template <typename T>
+    SaveFileHelper &operator<<(const T &value)
+    {
+        mOfs << value;
+        checkError();
+        return *this;
+    }
+
+    void write(const uint8_t *data, size_t size);
+
+  private:
+    void checkError();
+
+    std::ofstream mOfs;
+    std::string mFilePath;
+};
+
+// AMD_performance_monitor helpers.
+constexpr char kPerfMonitorExtensionName[] = "GL_AMD_performance_monitor";
+
+struct PerfMonitorCounter
+{
+    PerfMonitorCounter();
+    ~PerfMonitorCounter();
+
+    std::string name;
+    uint64_t value;
+};
+using PerfMonitorCounters = std::vector<PerfMonitorCounter>;
+
+struct PerfMonitorCounterGroup
+{
+    PerfMonitorCounterGroup();
+    ~PerfMonitorCounterGroup();
+
+    std::string name;
+    PerfMonitorCounters counters;
+};
+using PerfMonitorCounterGroups = std::vector<PerfMonitorCounterGroup>;
+
+uint32_t GetPerfMonitorCounterIndex(const PerfMonitorCounters &counters, const std::string &name);
+const PerfMonitorCounter &GetPerfMonitorCounter(const PerfMonitorCounters &counters,
+                                                const std::string &name);
+PerfMonitorCounter &GetPerfMonitorCounter(PerfMonitorCounters &counters, const std::string &name);
+uint32_t GetPerfMonitorCounterGroupIndex(const PerfMonitorCounterGroups &groups,
+                                         const std::string &name);
+const PerfMonitorCounterGroup &GetPerfMonitorCounterGroup(const PerfMonitorCounterGroups &groups,
+                                                          const std::string &name);
+PerfMonitorCounterGroup &GetPerfMonitorCounterGroup(PerfMonitorCounterGroups &groups,
+                                                    const std::string &name);
+
+struct PerfMonitorTriplet
+{
+    uint32_t group;
+    uint32_t counter;
+    uint64_t value;
+};
+
+#define ANGLE_VK_PERF_COUNTERS_X(FN)               \
+    FN(commandQueueSubmitCallsTotal)               \
+    FN(commandQueueSubmitCallsPerFrame)            \
+    FN(vkQueueSubmitCallsTotal)                    \
+    FN(vkQueueSubmitCallsPerFrame)                 \
+    FN(renderPasses)                               \
+    FN(writeDescriptorSets)                        \
+    FN(flushedOutsideRenderPassCommandBuffers)     \
+    FN(swapchainResolveInSubpass)                  \
+    FN(swapchainResolveOutsideSubpass)             \
+    FN(resolveImageCommands)                       \
+    FN(colorLoadOpClears)                          \
+    FN(colorLoadOpLoads)                           \
+    FN(colorLoadOpNones)                           \
+    FN(colorStoreOpStores)                         \
+    FN(colorStoreOpNones)                          \
+    FN(colorClearAttachments)                      \
+    FN(depthLoadOpClears)                          \
+    FN(depthLoadOpLoads)                           \
+    FN(depthLoadOpNones)                           \
+    FN(depthStoreOpStores)                         \
+    FN(depthStoreOpNones)                          \
+    FN(depthClearAttachments)                      \
+    FN(stencilLoadOpClears)                        \
+    FN(stencilLoadOpLoads)                         \
+    FN(stencilLoadOpNones)                         \
+    FN(stencilStoreOpStores)                       \
+    FN(stencilStoreOpNones)                        \
+    FN(stencilClearAttachments)                    \
+    FN(colorAttachmentUnresolves)                  \
+    FN(depthAttachmentUnresolves)                  \
+    FN(stencilAttachmentUnresolves)                \
+    FN(colorAttachmentResolves)                    \
+    FN(depthAttachmentResolves)                    \
+    FN(stencilAttachmentResolves)                  \
+    FN(readOnlyDepthStencilRenderPasses)           \
+    FN(pipelineCreationCacheHits)                  \
+    FN(pipelineCreationCacheMisses)                \
+    FN(pipelineCreationTotalCacheHitsDurationNs)   \
+    FN(pipelineCreationTotalCacheMissesDurationNs) \
+    FN(descriptorSetAllocations)                   \
+    FN(descriptorSetCacheTotalSize)                \
+    FN(descriptorSetCacheKeySizeBytes)             \
+    FN(uniformsAndXfbDescriptorSetCacheHits)       \
+    FN(uniformsAndXfbDescriptorSetCacheMisses)     \
+    FN(uniformsAndXfbDescriptorSetCacheTotalSize)  \
+    FN(textureDescriptorSetCacheHits)              \
+    FN(textureDescriptorSetCacheMisses)            \
+    FN(textureDescriptorSetCacheTotalSize)         \
+    FN(shaderResourcesDescriptorSetCacheHits)      \
+    FN(mutableTexturesUploaded)                    \
+    FN(shaderResourcesDescriptorSetCacheMisses)    \
+    FN(shaderResourcesDescriptorSetCacheTotalSize) \
+    FN(buffersGhosted)                             \
+    FN(vertexArraySyncStateCalls)                  \
+    FN(allocateNewBufferBlockCalls)                \
+    FN(dynamicBufferAllocations)                   \
+    FN(framebufferCacheSize)
+
+#define ANGLE_DECLARE_PERF_COUNTER(COUNTER) uint64_t COUNTER;
+
+struct VulkanPerfCounters
+{
+    ANGLE_VK_PERF_COUNTERS_X(ANGLE_DECLARE_PERF_COUNTER)
+};
+
+#undef ANGLE_DECLARE_PERF_COUNTER
 
 }  // namespace angle
 
@@ -173,8 +331,6 @@ inline std::string Str(int i)
     return strstr.str();
 }
 
-size_t FormatStringIntoVector(const char *fmt, va_list vararg, std::vector<char> &buffer);
-
 template <typename T>
 std::string ToString(const T &value)
 {
@@ -182,6 +338,39 @@ std::string ToString(const T &value)
     o << value;
     return o.str();
 }
+
+inline bool IsLittleEndian()
+{
+    constexpr uint32_t kEndiannessTest = 1;
+    const bool isLittleEndian          = *reinterpret_cast<const uint8_t *>(&kEndiannessTest) == 1;
+    return isLittleEndian;
+}
+
+// Helper class to use a mutex with the control of boolean.
+class ConditionalMutex final : angle::NonCopyable
+{
+  public:
+    ConditionalMutex() : mUseMutex(true) {}
+    void init(bool useMutex) { mUseMutex = useMutex; }
+    void lock()
+    {
+        if (mUseMutex)
+        {
+            mMutex.lock();
+        }
+    }
+    void unlock()
+    {
+        if (mUseMutex)
+        {
+            mMutex.unlock();
+        }
+    }
+
+  private:
+    std::mutex mMutex;
+    bool mUseMutex;
+};
 
 // snprintf is not defined with MSVC prior to to msvc14
 #if defined(_MSC_VER) && _MSC_VER < 1900
@@ -196,8 +385,9 @@ std::string ToString(const T &value)
 #define GL_INT_64_ANGLEX 0x6ABE
 #define GL_UINT_64_ANGLEX 0x6ABF
 #define GL_BGRA8_SRGB_ANGLEX 0x6AC0
+#define GL_BGR10_A2_ANGLEX 0x6AF9
 
-// These are dummy formats used to fit typeless D3D textures that can be bound to EGL pbuffers into
+// These are fake formats used to fit typeless D3D textures that can be bound to EGL pbuffers into
 // the format system (for extension EGL_ANGLE_d3d_texture_client_buffer):
 #define GL_RGBA8_TYPELESS_ANGLEX 0x6AC1
 #define GL_RGBA8_TYPELESS_SRGB_ANGLEX 0x6AC2
@@ -250,6 +440,21 @@ std::string ToString(const T &value)
 #define GL_RGB10_A2_SSCALED_ANGLEX 0x6AEC
 #define GL_RGB10_A2_USCALED_ANGLEX 0x6AED
 
+// EXT_texture_type_2_10_10_10_REV
+#define GL_RGB10_UNORM_ANGLEX 0x6AEE
+
+// These are fake formats for OES_vertex_type_10_10_10_2
+#define GL_A2_RGB10_UNORM_ANGLEX 0x6AEF
+#define GL_A2_RGB10_SNORM_ANGLEX 0x6AF0
+#define GL_A2_RGB10_USCALED_ANGLEX 0x6AF1
+#define GL_A2_RGB10_SSCALED_ANGLEX 0x6AF2
+#define GL_X2_RGB10_UINT_ANGLEX 0x6AF3
+#define GL_X2_RGB10_SINT_ANGLEX 0x6AF4
+#define GL_X2_RGB10_USCALED_ANGLEX 0x6AF5
+#define GL_X2_RGB10_SSCALED_ANGLEX 0x6AF6
+#define GL_X2_RGB10_UNORM_ANGLEX 0x6AF7
+#define GL_X2_RGB10_SNORM_ANGLEX 0x6AF8
+
 #define ANGLE_CHECK_GL_ALLOC(context, result) \
     ANGLE_CHECK(context, result, "Failed to allocate host memory", GL_OUT_OF_MEMORY)
 
@@ -259,6 +464,41 @@ std::string ToString(const T &value)
 #define ANGLE_GL_UNREACHABLE(context) \
     UNREACHABLE();                    \
     ANGLE_CHECK(context, false, "Unreachable Code.", GL_INVALID_OPERATION)
+
+#if defined(ANGLE_WITH_LSAN)
+#    define ANGLE_SCOPED_DISABLE_LSAN() __lsan::ScopedDisabler lsanDisabler
+#else
+#    define ANGLE_SCOPED_DISABLE_LSAN()
+#endif
+
+#if defined(ANGLE_WITH_MSAN)
+class MsanScopedDisableInterceptorChecks final : angle::NonCopyable
+{
+  public:
+    MsanScopedDisableInterceptorChecks() { __msan_scoped_disable_interceptor_checks(); }
+    ~MsanScopedDisableInterceptorChecks() { __msan_scoped_enable_interceptor_checks(); }
+};
+#    define ANGLE_SCOPED_DISABLE_MSAN() \
+        MsanScopedDisableInterceptorChecks msanScopedDisableInterceptorChecks
+#else
+#    define ANGLE_SCOPED_DISABLE_MSAN()
+#endif
+
+// The ANGLE_NO_SANITIZE_MEMORY macro suppresses MemorySanitizer checks for
+// use-of-uninitialized-data. It can be used to decorate functions with known
+// false positives.
+#ifdef __clang__
+#    define ANGLE_NO_SANITIZE_MEMORY __attribute__((no_sanitize_memory))
+#else
+#    define ANGLE_NO_SANITIZE_MEMORY
+#endif
+
+// Similar to the above, but for thread sanitization.
+#ifdef __clang__
+#    define ANGLE_NO_SANITIZE_THREAD __attribute__((no_sanitize_thread))
+#else
+#    define ANGLE_NO_SANITIZE_THREAD
+#endif
 
 // The below inlining code lifted from V8.
 #if defined(__clang__) || (defined(__GNUC__) && defined(__has_attribute))
@@ -302,6 +542,9 @@ std::string ToString(const T &value)
 #    define ANGLE_FORMAT_PRINTF(fmt, args)
 #endif
 
+ANGLE_FORMAT_PRINTF(1, 0)
+size_t FormatStringIntoVector(const char *fmt, va_list vararg, std::vector<char> &buffer);
+
 // Format messes up the # inside the macro.
 // clang-format off
 #ifndef ANGLE_STRINGIFY
@@ -313,15 +556,46 @@ std::string ToString(const T &value)
 #    define ANGLE_MACRO_STRINGIFY(x) ANGLE_STRINGIFY(x)
 #endif
 
-// Detect support for C++17 [[nodiscard]]
-#if !defined(__has_cpp_attribute)
-#    define __has_cpp_attribute(name) 0
-#endif  // !defined(__has_cpp_attribute)
-
-#if __has_cpp_attribute(nodiscard)
-#    define ANGLE_NO_DISCARD [[nodiscard]]
+#if __has_cpp_attribute(clang::require_constant_initialization)
+#    define ANGLE_REQUIRE_CONSTANT_INIT [[clang::require_constant_initialization]]
 #else
-#    define ANGLE_NO_DISCARD
-#endif  // __has_cpp_attribute(nodiscard)
+#    define ANGLE_REQUIRE_CONSTANT_INIT
+#endif  // __has_cpp_attribute(require_constant_initialization)
 
+// Compiler configs.
+inline bool IsASan()
+{
+#if defined(ANGLE_WITH_ASAN)
+    return true;
+#else
+    return false;
+#endif  // defined(ANGLE_WITH_ASAN)
+}
+
+inline bool IsMSan()
+{
+#if defined(ANGLE_WITH_MSAN)
+    return true;
+#else
+    return false;
+#endif  // defined(ANGLE_WITH_MSAN)
+}
+
+inline bool IsTSan()
+{
+#if defined(ANGLE_WITH_TSAN)
+    return true;
+#else
+    return false;
+#endif  // defined(ANGLE_WITH_TSAN)
+}
+
+inline bool IsUBSan()
+{
+#if defined(ANGLE_WITH_UBSAN)
+    return true;
+#else
+    return false;
+#endif  // defined(ANGLE_WITH_UBSAN)
+}
 #endif  // COMMON_ANGLEUTILS_H_

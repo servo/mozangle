@@ -1,13 +1,11 @@
 //
-// Copyright (c) 2002-2014 The ANGLE Project Authors. All rights reserved.
+// Copyright 2002 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
 
 #ifndef COMPILER_TRANSLATOR_CONSTANTUNION_H_
 #define COMPILER_TRANSLATOR_CONSTANTUNION_H_
-
-#include <assert.h>
 
 #include "compiler/translator/BaseTypes.h"
 #include "compiler/translator/Common.h"
@@ -22,6 +20,10 @@ class TConstantUnion
   public:
     POOL_ALLOCATOR_NEW_DELETE
     TConstantUnion();
+    TConstantUnion(int i);
+    TConstantUnion(unsigned int u);
+    TConstantUnion(float f);
+    TConstantUnion(bool b);
 
     bool cast(TBasicType newType, const TConstantUnion &constant);
 
@@ -56,6 +58,7 @@ class TConstantUnion
     unsigned int getUConst() const;
     float getFConst() const;
     bool getBConst() const;
+    bool isZero() const;
     TYuvCscStandardEXT getYuvCscStandardEXTConst() const;
 
     bool operator==(const int i) const;
