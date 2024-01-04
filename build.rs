@@ -1,13 +1,15 @@
 #![allow(non_upper_case_globals)]
 
-extern crate bindgen;
 extern crate cc;
 #[cfg(feature = "egl")]
 extern crate gl_generator;
 extern crate walkdir;
 
+extern crate bindgen;
+
 use std::collections::HashSet;
 use std::env;
+#[cfg(feature = "egl")]
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -60,7 +62,6 @@ fn main() {
         }
         generate_gl_bindings();
     }
-
     for entry in walkdir::WalkDir::new("gfx") {
         let entry = entry.unwrap();
         println!(
@@ -196,6 +197,7 @@ fn build_lib(compiled_libraries: &mut HashSet<Libs>, target: &String, lib: Libs)
                 "darwin",
                 &[
                     "gfx/angle/checkout/src/common/system_utils_mac.cpp",
+                    "gfx/angle/checkout/src/common/system_utils_apple.cpp",
                     "gfx/angle/checkout/src/common/system_utils_posix.cpp",
                 ][..],
             ),
@@ -284,7 +286,6 @@ fn build_translator(compiled_libraries: &mut HashSet<Libs>, target: &String) {
 
 
     build
-        .file("src/shaders/glslang-c.cpp")
         .cpp(true)
         .std("c++17")
         .warnings(false)
@@ -292,15 +293,38 @@ fn build_translator(compiled_libraries: &mut HashSet<Libs>, target: &String) {
         .flag_if_supported("/wd4127")
         .flag_if_supported("/wd9002");
 
-    let status = cmd.status().expect("Failed to link the dynamic library");
-    assert!(status.success(), "Linking failed");
+    if target.contains("x86_64") || target.contains("i686") {
+        build
+            .flag_if_supported("-msse2") // GNU
+            .flag_if_supported("-arch:SSE2"); // MSVC
+    }
 
-    build.link_lib_modifier("-whole-archive");
+    let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
+    if cfg!(feature = "dynamic_lib") {
+        build
+        .flag_if_supported("-shared")
+        .flag_if_supported("-dynamiclib");
 
-    build.compile("glslang_glue");
+        let mut cmd = build.get_compiler().to_command();
+        cmd.arg(out_dir.join(format!("lib{}.a", data.lib)));
+        for lib in data.use_libs {
+            cmd.arg(out_dir.join(format!("lib{}.a", lib.to_data().lib)));
+        }
+
+        cmd.arg("src/shaders/glslang-c.cpp");
+        let file = out_dir.join("libglslang_glue.dylib");
+        cmd.arg("-o").arg(&file);
+
+        let status = cmd.status().expect("Failed to link the dynamic library");
+        assert!(status.success(), "Linking failed");
+
+        println!("cargo:rustc-link-search=native={}", out_dir.display());
+    } else {
+        build.file("src/shaders/glslang-c.cpp");
+        build.compile("glslang_glue");
+    }
 
     // now generate bindings
-    let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     let mut builder = bindgen::builder()
         .rust_target(bindgen::RustTarget::Stable_1_59)
         .header("./src/shaders/glslang-c.cpp")
