@@ -62,6 +62,7 @@ fn main() {
         }
         generate_gl_bindings();
     }
+
     for entry in walkdir::WalkDir::new("gfx") {
         let entry = entry.unwrap();
         println!(
@@ -284,7 +285,6 @@ fn build_translator(compiled_libraries: &mut HashSet<Libs>, target: &String) {
         build.flag(flag);
     }
 
-
     build
         .cpp(true)
         .std("c++17")
@@ -312,8 +312,17 @@ fn build_translator(compiled_libraries: &mut HashSet<Libs>, target: &String) {
         }
 
         cmd.arg("src/shaders/glslang-c.cpp");
-        let file = out_dir.join("libglslang_glue.dylib");
-        cmd.arg("-o").arg(&file);
+        println!("cargo:rustc-link-lib=dylib={}", "glslang_glue");
+        #[cfg(target_os = "macos")]
+        {
+            let file = out_dir.join("libglslang_glue.dylib");
+            cmd.arg("-o").arg(&file);
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let file = out_dir.join(format!("libglslang_glue.so"));
+            cmd.arg("-o").arg(&file);
+        }
 
         let status = cmd.status().expect("Failed to link the dynamic library");
         assert!(status.success(), "Linking failed");
