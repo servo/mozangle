@@ -21,7 +21,7 @@ jobs:
       fail-fast: false
       matrix:
         os: ["ubuntu-latest", "macos-latest"]
-        cargo-options: [""]
+        cargo-options: ["", '--features "dynamic_lib"']
         include:
           - os: "windows-latest"
             cargo-options: '--features "egl"'
