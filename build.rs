@@ -238,9 +238,11 @@ fn build_lib(compiled_libraries: &mut HashSet<Libs>, target: &String, lib: Libs)
         .flag_if_supported("-Wno-unused-command-line-argument");
 
     if target.contains("x86_64") || target.contains("i686") {
-        build
-            .flag_if_supported("-msse2") // GNU
-            .flag_if_supported("-arch:SSE2"); // MSVC
+        if build.get_compiler().is_like_msvc() {
+            build.flag_if_supported("-arch:SSE2");
+        } else {
+            build.flag_if_supported("-msse2");
+        }
     }
 
     // Enable multiprocessing for faster builds.
@@ -300,9 +302,11 @@ fn build_translator(compiled_libraries: &mut HashSet<Libs>, target: &String) {
         .flag_if_supported("/wd9002");
 
     if target.contains("x86_64") || target.contains("i686") {
-        build
-            .flag_if_supported("-msse2") // GNU
-            .flag_if_supported("-arch:SSE2"); // MSVC
+        if build.get_compiler().is_like_msvc() {
+            build.flag_if_supported("-arch:SSE2");
+        } else {
+            build.flag_if_supported("-msse2");
+        }
     }
 
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
