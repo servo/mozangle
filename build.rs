@@ -234,7 +234,8 @@ fn build_lib(compiled_libraries: &mut HashSet<Libs>, target: &String, lib: Libs)
     build
         .flag_if_supported("/wd4100")
         .flag_if_supported("/wd4127")
-        .flag_if_supported("/wd9002");
+        .flag_if_supported("/wd9002")
+        .flag_if_supported("-Wno-unused-command-line-argument");
 
     if target.contains("x86_64") || target.contains("i686") {
         build
