@@ -394,11 +394,12 @@ fn fixup_path(path: &str) -> String {
 fn generate_gl_bindings() {
     println!("generate_gl_bindings");
     use gl_generator::{Api, Fallbacks, Profile, Registry};
-    use std::fs::File;
+    use std::{fs::File, io::Write};
 
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
 
     let mut file = File::create(&out_dir.join("egl_bindings.rs")).unwrap();
+    file.write_all(b"#[allow(unused_imports)]\n").unwrap();
     Registry::new(
         Api::Egl,
         (1, 5),
@@ -417,6 +418,7 @@ fn generate_gl_bindings() {
     .unwrap();
 
     let mut file = File::create(&out_dir.join("gles_bindings.rs")).unwrap();
+    file.write_all(b"#[allow(unused_imports)]\n").unwrap();
     Registry::new(Api::Gles2, (2, 0), Profile::Core, Fallbacks::None, [])
         .write_bindings(gl_generator::StaticGenerator, &mut file)
         .unwrap();
