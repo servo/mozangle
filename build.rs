@@ -106,9 +106,21 @@ fn build_windows_dll(data: &build_data::Data, dll_name: &str, def_file: &str) {
         build.include(fixup_path(file));
     }
 
+    // compile source files to object files (workaround for clang-cl not supporting /MP)
+    for file in data.sources {
+        build.file(fixup_path(file));
+    }
+    let obj_paths = build.compile_intermediates();
+
+    let build = cc::Build::new();
     let mut cmd = build.get_compiler().to_command();
     let out_string = env::var("OUT_DIR").unwrap();
     let out_path = Path::new(&out_string);
+
+    // link with object files compiled previously
+    for obj_path in &obj_paths {
+        cmd.arg(obj_path);
+    }
 
     for lib in data.use_libs {
         cmd.arg(out_path.join(format!("{}.lib", lib.to_data().lib)));
@@ -123,13 +135,6 @@ fn build_windows_dll(data: &build_data::Data, dll_name: &str, def_file: &str) {
     if dll_name == "libGLESv2" {
         // transitive lib (that's the only case)
         cmd.arg(out_path.join("preprocessor.lib"));
-        for file in data.sources {
-            cmd.arg(fixup_path(file));
-        }
-    } else {
-        for file in data.sources {
-            cmd.arg(fixup_path(file));
-        }
     }
 
     // Enable multiprocessing for faster builds.
@@ -229,7 +234,8 @@ fn build_lib(compiled_libraries: &mut HashSet<Libs>, target: &String, lib: Libs)
     build
         .flag_if_supported("/wd4100")
         .flag_if_supported("/wd4127")
-        .flag_if_supported("/wd9002");
+        .flag_if_supported("/wd9002")
+        .flag_if_supported("-Wno-unused-command-line-argument");
 
     if target.contains("x86_64") || target.contains("i686") {
         build
@@ -389,11 +395,12 @@ fn fixup_path(path: &str) -> String {
 fn generate_gl_bindings() {
     println!("generate_gl_bindings");
     use gl_generator::{Api, Fallbacks, Profile, Registry};
-    use std::fs::File;
+    use std::{fs::File, io::Write};
 
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
 
     let mut file = File::create(&out_dir.join("egl_bindings.rs")).unwrap();
+    file.write_all(b"#[allow(unused_imports)]\n").unwrap();
     Registry::new(
         Api::Egl,
         (1, 5),
@@ -412,6 +419,7 @@ fn generate_gl_bindings() {
     .unwrap();
 
     let mut file = File::create(&out_dir.join("gles_bindings.rs")).unwrap();
+    file.write_all(b"#[allow(unused_imports)]\n").unwrap();
     Registry::new(Api::Gles2, (2, 0), Profile::Core, Fallbacks::None, [])
         .write_bindings(gl_generator::StaticGenerator, &mut file)
         .unwrap();
