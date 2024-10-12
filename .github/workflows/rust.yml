@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ["ubuntu-latest", "macos-latest"]
+        os: ["ubuntu-22.04", "macos-latest"]
         cargo-options: ["", '--features "dynamic_lib"']
         include:
           - os: "windows-latest"
@@ -57,7 +57,7 @@ jobs:
       - run: cargo test --target ${{ matrix.target }}
 
   build_result:
-    name: homu build finished
+    name: Result
     runs-on: ubuntu-latest
     needs:
       - "build"
