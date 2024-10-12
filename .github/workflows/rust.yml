@@ -57,7 +57,7 @@ jobs:
       - run: cargo test --target ${{ matrix.target }}
 
   build_result:
-    name: homu build finished
+    name: Result
     runs-on: ubuntu-latest
     needs:
       - "build"
