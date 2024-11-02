@@ -323,13 +323,11 @@ fn build_translator(compiled_libraries: &mut HashSet<Libs>, target: &String) {
 
         cmd.arg("src/shaders/glslang-c.cpp");
         println!("cargo:rustc-link-lib=dylib={}", "glslang_glue");
-        #[cfg(target_os = "macos")]
-        {
+        let target_os = std::env::var("CARGO_CFG_TARGET_OS").expect("Cargo error?");
+        if target_os == "macos" {
             let file = out_dir.join("libglslang_glue.dylib");
             cmd.arg("-o").arg(&file);
-        }
-        #[cfg(target_os = "linux")]
-        {
+        } else if target_os == "linux" {
             let file = out_dir.join(format!("libglslang_glue.so"));
             cmd.arg("-o").arg(&file);
         }
