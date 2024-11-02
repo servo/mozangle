@@ -69,4 +69,4 @@ jobs:
         run: exit 0
       - name: Mark the job as unsuccessful
         run: exit 1
-        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
