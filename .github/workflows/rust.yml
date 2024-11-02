@@ -59,6 +59,7 @@ jobs:
   build_result:
     name: Result
     runs-on: ubuntu-latest
+    if: always()
     needs:
       - "build"
       - "linux-cross-compile"
@@ -69,4 +70,4 @@ jobs:
         if: success()
       - name: Mark the job as unsuccessful
         run: exit 1
-        if: "!success()"
+        if: !success()
