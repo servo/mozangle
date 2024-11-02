@@ -414,7 +414,6 @@ fn generate_gl_bindings() {
             "EGL_ANGLE_device_d3d",
             "EGL_EXT_platform_base",
             "EGL_EXT_platform_device",
-            "EGL_EXT_device_query",
             "EGL_KHR_create_context",
             "EGL_EXT_create_context_robustness",
             "EGL_KHR_create_context_no_error",
