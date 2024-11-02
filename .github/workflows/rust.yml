@@ -30,7 +30,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.81
       - name: Set env
         if: contains(matrix.os, 'ubuntu')
         run: echo "LIBCLANG_PATH=/usr/lib/llvm-14/lib" >> $GITHUB_ENV
@@ -59,6 +59,7 @@ jobs:
   build_result:
     name: Result
     runs-on: ubuntu-latest
+    if: always()
     needs:
       - "build"
       - "linux-cross-compile"
@@ -66,7 +67,6 @@ jobs:
     steps:
       - name: Mark the job as successful
         run: exit 0
-        if: success()
       - name: Mark the job as unsuccessful
         run: exit 1
-        if: "!success()"
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
