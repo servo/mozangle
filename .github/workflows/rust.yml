@@ -67,7 +67,6 @@ jobs:
     steps:
       - name: Mark the job as successful
         run: exit 0
-        if: success()
       - name: Mark the job as unsuccessful
         run: exit 1
-        if: "!success()"
+        if: ${{ failure() || cancelled() }}
