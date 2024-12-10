@@ -341,9 +341,14 @@ fn build_translator(compiled_libraries: &mut HashSet<Libs>, target: &String) {
         build.compile("glslang_glue");
     }
 
+    let Ok(rust_target) = bindgen::RustTarget::stable(80, 0) else {
+        // `InvalidRustTarget` doesn't implement debug so we manually panic.
+        panic!("Invalid rust target specified");
+    };
+
     // now generate bindings
     let mut builder = bindgen::builder()
-        .rust_target(bindgen::RustTarget::Stable_1_59)
+        .rust_target(rust_target)
         .header("./src/shaders/glslang-c.cpp")
         .opaque_type("std.*")
         .allowlist_type("Sh.*")
