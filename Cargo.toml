@@ -15,7 +15,7 @@ lazy_static = "1.0"
 dlopen = "0.1"
 
 [build-dependencies]
-bindgen = { version = "0.69", default-features = false, features = [
+bindgen = { version = "0.71.1", default-features = false, features = [
     "runtime",
     "which-rustfmt",
 ] }
