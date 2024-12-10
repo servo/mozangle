@@ -21,9 +21,7 @@ use std::slice;
 use std::str;
 use std::sync::Mutex;
 
-lazy_static! {
-    static ref CONSTRUCT_COMPILER_LOCK: Mutex<()> = Mutex::new(());
-}
+static CONSTRUCT_COMPILER_LOCK: Mutex<()> = Mutex::new(());
 
 pub fn initialize() -> Result<(), &'static str> {
     if unsafe { GLSLangInitialize() } == 0 {

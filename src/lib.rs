@@ -1,5 +1,3 @@
-#[macro_use]
-extern crate lazy_static;
 // This extern crates are needed for linking
 #[cfg(test)]
 extern crate dlopen;
