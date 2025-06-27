@@ -37,10 +37,6 @@ jobs:
         with:
           version: "20"
           env: true
-      - shell: bash
-        run: |
-          echo "LIBCLANG_PATH=${{ env.LLVM_PATH }}/lib" >> $GITHUB_ENV
-          echo "CLANG_PATH=${{ env.CC }}" >> $GITHUB_ENV
       - name: Run tests
         run: cargo test --verbose ${{ matrix.cargo-options }}
 
