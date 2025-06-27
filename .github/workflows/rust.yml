@@ -35,7 +35,7 @@ jobs:
       - name: Install LLVM and Clang
         uses: KyleMayes/install-llvm-action@v2
         with:
-          version: "20.0"
+          version: "20"
       - name: Run tests
         run: cargo test --verbose ${{ matrix.cargo-options }}
 
