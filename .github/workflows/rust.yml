@@ -11,6 +11,7 @@ on:
   schedule:
     # Runs at 04:30, every Saturday
     - cron: "30 4 * * 6"
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
