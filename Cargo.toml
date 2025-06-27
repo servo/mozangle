@@ -16,7 +16,6 @@ dlopen = "0.1"
 [build-dependencies]
 bindgen = { version = "0.72", default-features = false, features = [
     "runtime",
-    "which-rustfmt",
 ] }
 cc = { version = "1", features = ["parallel"] }
 gl_generator = { version = "0.14", optional = true }
