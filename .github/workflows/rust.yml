@@ -39,7 +39,7 @@ jobs:
       - shell: bash
         run: |
           echo "LIBCLANG_PATH=${{ env.LLVM_PATH }}/lib" >> $GITHUB_ENV
-          echo "CLANG_PATH=${{ env.LLVM_PATH }}/lib" >> $GITHUB_ENV
+          echo "CLANG_PATH=${{ env.LLVM_PATH }}" >> $GITHUB_ENV
       - name: Run tests
         run: cargo test --verbose ${{ matrix.cargo-options }}
 
