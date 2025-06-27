@@ -36,7 +36,6 @@ jobs:
         uses: KyleMayes/install-llvm-action@v2
         with:
           version: "20"
-          env: true
       - shell: bash
         run: |
           echo "LIBCLANG_PATH=${{ env.LLVM_PATH }}/lib" >> $GITHUB_ENV
