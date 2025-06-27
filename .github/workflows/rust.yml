@@ -32,11 +32,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.81
-      - name: Install LLVM and Clang
-        uses: KyleMayes/install-llvm-action@v2
-        with:
-          version: "20"
-          env: true
       - name: Run tests
         run: cargo test --verbose ${{ matrix.cargo-options }}
 
