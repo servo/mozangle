@@ -11,6 +11,7 @@ on:
   schedule:
     # Runs at 04:30, every Saturday
     - cron: "30 4 * * 6"
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -31,9 +32,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.81
-      - name: Set env
-        if: contains(matrix.os, 'ubuntu')
-        run: echo "LIBCLANG_PATH=/usr/lib/llvm-14/lib" >> $GITHUB_ENV
+      - name: Install LLVM and Clang
+        if: ${{ !contains(matrix.os, 'macos') }}
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "20"
       - name: Run tests
         run: cargo test --verbose ${{ matrix.cargo-options }}
 
