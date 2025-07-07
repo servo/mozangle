@@ -83,11 +83,15 @@ jobs:
         id: setup-ndk
         with:
           ndk-version: r26c
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: armv7-linux-androideabi
       - name: Build
         env:
           ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
-          ./android-build cargo build --target armv7a-linux-android
+          ./android-build cargo build --target armv7-linux-android
 
   build_result:
     name: Result
