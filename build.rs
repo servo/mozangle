@@ -287,14 +287,14 @@ fn build_translator(compiled_libraries: &mut HashSet<Libs>, target: &String) {
         clang_args.push(fixup_path(file));
     }
 
+    if let Ok(android_api) = env::var("ANDROID_API_LEVEL").as_deref() {
+        clang_args.push(format!("-D__ANDROID_MIN_SDK_VERSION__={}", android_api));
+    }
+
     let mut build = cc::Build::new();
 
     for flag in &clang_args {
         build.flag(flag);
-    }
-
-    if let Ok(android_api) = env::var("ANDROID_API_LEVEL").as_deref() {
-        build.define("__ANDROID_MIN_SDK_VERSION__", android_api);
     }
 
     build
