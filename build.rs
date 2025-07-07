@@ -293,6 +293,10 @@ fn build_translator(compiled_libraries: &mut HashSet<Libs>, target: &String) {
         build.flag(flag);
     }
 
+    if let Ok(android_api) = env::var("ANDROID_API_LEVEL").as_deref() {
+        build.define("__ANDROID_MIN_SDK_VERSION__", android_api);
+    }
+
     build
         .cpp(true)
         .std("c++17")
