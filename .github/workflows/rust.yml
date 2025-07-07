@@ -91,7 +91,7 @@ jobs:
         env:
           ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
-          ./android-build cargo build --target armv7-linux-android
+          ./android-build cargo build --target armv7-linux-androideabi
 
   build_result:
     name: Result
