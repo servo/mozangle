@@ -67,7 +67,7 @@ def set_toolchain_binaries_in_env(toolchain_dir: str, env: Dict[str, str]):
     env["YASM"] = yasm
     env["CLANG_PATH"] = cc
     env["LIBCLANG_PATH"] = os.path.join(toolchain_dir, "lib")
-    env["BINDGEN_EXTRA_CLANG_ARGS"] = f"--target=armv7a-linux-androideabi30 --sysroot={os.path.join(toolchain_dir, 'sysroot')}"
+    env["BINDGEN_EXTRA_CLANG_ARGS"] = f"--target=aarch64-linux-android --sysroot={os.path.join(toolchain_dir, 'sysroot')}"
 
 
 def create_environment_for_build() -> Dict[str, str]:
