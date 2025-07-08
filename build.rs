@@ -173,6 +173,10 @@ fn build_lib(compiled_libraries: &mut HashSet<Libs>, target: &String, lib: Libs)
 
     build.cpp(true).std("c++17").warnings(false);
 
+    if let Ok(android_api) = env::var("ANDROID_API_LEVEL").as_deref() {
+        build.define("__ANDROID_MIN_SDK_VERSION__", android_api);
+    }
+
     for &(k, v) in data.defines {
         build.define(k, v);
     }
