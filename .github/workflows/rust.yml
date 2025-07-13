@@ -82,7 +82,7 @@ jobs:
         env:
           ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
-          ./android-build cargo build --target aarch64-linux-android
+          ./android-build cargo build --release --target aarch64-linux-android
 
   build_result:
     name: Result
