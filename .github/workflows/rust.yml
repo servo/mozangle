@@ -69,10 +69,6 @@ jobs:
           swap-storage: false
       - uses: actions/checkout@v4
       - run: sudo apt update
-      - name: Install LLVM and Clang
-        uses: KyleMayes/install-llvm-action@v2
-        with:
-          version: "16.0"
       - name: Install Android NDK
         uses: nttld/setup-ndk@v1
         id: setup-ndk
