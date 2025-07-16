@@ -20,6 +20,7 @@ use crate::build_data::Libs;
 mod build_data;
 
 fn main() {
+    panic!("{}", std::env::vars().into_iter().map(|(k, v)| format!("{k}: {v}")).fold(String::new(), |a, b| a + &b + "\n"));
     let target = env::var("TARGET").unwrap();
 
     if cfg!(feature = "egl") && !target.contains("windows") {
