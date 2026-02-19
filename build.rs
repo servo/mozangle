@@ -215,6 +215,12 @@ fn build_lib(compiled_libraries: &mut HashSet<Libs>, target: &String, lib: Libs)
                 ][..],
             ),
             (
+                "freebsd",
+                &[
+                    "gfx/angle/checkout/src/common/system_utils_posix.cpp",
+                ][..],
+            ),
+            (
                 "windows",
                 &[
                     "gfx/angle/checkout/src/common/system_utils_win.cpp",
