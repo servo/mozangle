@@ -7,7 +7,7 @@ DEFINES["ANGLE_DISABLE_POOL_ALLOC"] = True
 DEFINES["ANGLE_ENABLE_SHARE_CONTEXT_LOCK"] = "1"
 DEFINES["ANGLE_GLESV2_LIBRARY_NAME"] = '"libGLESv2"'
 # DEFINES["ANGLE_IS_WIN"] = True
-# DEFINES["ANGLE_USE_EGL_LOADER"] = True
+DEFINES["ANGLE_USE_EGL_LOADER"] = True
 DEFINES["ANGLE_VMA_VERSION"] = "2003000"
 # DEFINES["CERT_CHAIN_PARA_HAS_EXTRA_FIELDS"] = True
 DEFINES["CR_CLANG_REVISION"] = '"llvmorg-16-init-6578-g0d30e92f-2"'
@@ -157,11 +157,6 @@ USE_LIBS += [
     "libGLESv2",
 ]
 
-DIRS += [
-    "../angle_common",
-    "../libGLESv2",
-]
-
 OS_LIBS += [
     "advapi32",
     "comdlg32",
@@ -211,4 +206,4 @@ OS_LIBS += [
 
 DEFFILE = "../../checkout/src/libEGL/libEGL_autogen.def"
 RCFILE = "../../checkout/src/libEGL/libEGL.rc"
-GeckoSharedLibrary("libEGL", linkage=None)
+GeckoSharedLibrary("libEGL")
