@@ -156,6 +156,33 @@ fn build_windows_dll(data: &build_data::Data, dll_name: &str, def_file: &str) {
 }
 
 fn build_lib(compiled_libraries: &mut HashSet<Libs>, target: &String, lib: Libs) {
+    let mut reverse_link_order = vec![];
+    collect_reverse_link_order(&mut reverse_link_order, lib);
+    let link_order = reverse_link_order.iter().rev();
+    for lib in link_order {
+        build_single_lib(compiled_libraries, target, *lib);
+    }
+}
+
+/// Determines the link order (reversed) of libraries
+///
+/// This means that for each library, all dependencies will be to the left in `order`.
+/// Traditional linkers which scan from left to right, require that dependencies appear
+/// to the right on the linker line of the library that required a symbol, so that undefined symbols
+/// can be resolved in one scan from left to right over the linked library list.
+/// Since I'm not sure how to construct that, this function returns the reverse order, and it's
+/// up to the caller to use `.rev()` to get the linker order.
+fn collect_reverse_link_order(order: &mut Vec<Libs>, lib: Libs) {
+    if order.contains(&lib) {
+        return;
+    }
+    for dep_lib in lib.to_data().use_libs {
+        collect_reverse_link_order(order, *dep_lib);
+    }
+    order.push(lib);
+}
+
+fn build_single_lib(compiled_libraries: &mut HashSet<Libs>, target: &String, lib: Libs) {
     // Do not rebuild this library if it is already built.
     if compiled_libraries.contains(&lib) {
         return;
@@ -163,9 +190,6 @@ fn build_lib(compiled_libraries: &mut HashSet<Libs>, target: &String, lib: Libs)
 
     println!("build_lib: {lib:?}");
     let data = lib.to_data();
-    for dep_lib in data.use_libs {
-        build_lib(compiled_libraries, target, *dep_lib);
-    }
     let repo = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
     env::set_current_dir(repo).unwrap();
 
