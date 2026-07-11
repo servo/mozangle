@@ -257,8 +257,9 @@ fn build_lib(compiled_libraries: &mut HashSet<Libs>, target: &String, lib: Libs)
     // we want all symbols as they are for consumers (are shared libs)
     if data.shared {
         build.link_lib_modifier("-bundle");
-        build.link_lib_modifier("+whole-archive");
     }
+
+    build.link_lib_modifier("+whole-archive");
 
     build.compile(data.lib);
 
