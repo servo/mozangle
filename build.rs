@@ -156,28 +156,30 @@ fn build_windows_dll(data: &build_data::Data, dll_name: &str, def_file: &str) {
 }
 
 fn build_lib(compiled_libraries: &mut HashSet<Libs>, target: &String, lib: Libs) {
-    let mut reverse_link_order = vec![];
-    collect_reverse_link_order(&mut reverse_link_order, lib);
-    let link_order = reverse_link_order.iter().rev();
+    let link_order = collect_link_order(lib);
     for lib in link_order {
-        build_single_lib(compiled_libraries, target, *lib);
+        build_single_lib(compiled_libraries, target, lib);
     }
 }
 
-/// Determines the link order (reversed) of libraries
+/// Returns libraries in linker order, i.e. dependents before dependencies.
 ///
-/// This means that for each library, all dependencies will be to the left in `order`.
-/// Traditional linkers which scan from left to right, require that dependencies appear
-/// to the right on the linker line of the library that required a symbol, so that undefined symbols
-/// can be resolved in one scan from left to right over the linked library list.
-/// Since I'm not sure how to construct that, this function returns the reverse order, and it's
-/// up to the caller to use `.rev()` to get the linker order.
-fn collect_reverse_link_order(order: &mut Vec<Libs>, lib: Libs) {
+/// We need to compile in this order, since the order the link statements are
+/// emitted in (by cc-rs) is the order they end up on the linker line.
+fn collect_link_order(lib: Libs) -> Vec<Libs> {
+    let mut dependency_order = vec![];
+    collect_depth_first_order(&mut dependency_order, lib);
+    dependency_order.reverse();
+    dependency_order
+}
+
+/// Collects libraries using depth first search
+fn collect_depth_first_order(order: &mut Vec<Libs>, lib: Libs) {
     if order.contains(&lib) {
         return;
     }
     for dep_lib in lib.to_data().use_libs {
-        collect_reverse_link_order(order, *dep_lib);
+        collect_depth_first_order(order, *dep_lib);
     }
     order.push(lib);
 }
