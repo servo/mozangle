@@ -156,6 +156,35 @@ fn build_windows_dll(data: &build_data::Data, dll_name: &str, def_file: &str) {
 }
 
 fn build_lib(compiled_libraries: &mut HashSet<Libs>, target: &String, lib: Libs) {
+    let link_order = collect_link_order(lib);
+    for lib in link_order {
+        build_single_lib(compiled_libraries, target, lib);
+    }
+}
+
+/// Returns libraries in linker order, i.e. dependents before dependencies.
+///
+/// We need to compile in this order, since the order the link statements are
+/// emitted in (by cc-rs) is the order they end up on the linker line.
+fn collect_link_order(lib: Libs) -> Vec<Libs> {
+    let mut dependency_order = vec![];
+    collect_depth_first_order(&mut dependency_order, lib);
+    dependency_order.reverse();
+    dependency_order
+}
+
+/// Collects libraries using depth first search
+fn collect_depth_first_order(order: &mut Vec<Libs>, lib: Libs) {
+    if order.contains(&lib) {
+        return;
+    }
+    for dep_lib in lib.to_data().use_libs {
+        collect_depth_first_order(order, *dep_lib);
+    }
+    order.push(lib);
+}
+
+fn build_single_lib(compiled_libraries: &mut HashSet<Libs>, target: &String, lib: Libs) {
     // Do not rebuild this library if it is already built.
     if compiled_libraries.contains(&lib) {
         return;
@@ -163,9 +192,6 @@ fn build_lib(compiled_libraries: &mut HashSet<Libs>, target: &String, lib: Libs)
 
     println!("build_lib: {lib:?}");
     let data = lib.to_data();
-    for dep_lib in data.use_libs {
-        build_lib(compiled_libraries, target, *dep_lib);
-    }
     let repo = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
     env::set_current_dir(repo).unwrap();
 

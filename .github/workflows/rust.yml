@@ -31,7 +31,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.81
+      - uses: dtolnay/rust-toolchain@1.88
       - name: Install LLVM and Clang
         if: ${{ !contains(matrix.os, 'macos') }}
         uses: KyleMayes/install-llvm-action@v2
