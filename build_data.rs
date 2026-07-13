@@ -100,7 +100,6 @@ pub const ANGLE_COMMON: Data = Data {
     ],
     shared: false,
 };
-
 pub const ANGLE_GPU_INFO_UTIL: Data = Data {
     lib: "angle_gpu_info_util",
     sources: &[
@@ -159,7 +158,6 @@ pub const ANGLE_GPU_INFO_UTIL: Data = Data {
     ],
     shared: false,
 };
-
 pub const ANGLE_IMAGE_UTIL: Data = Data {
     lib: "angle_image_util",
     sources: &[
@@ -206,7 +204,6 @@ pub const ANGLE_IMAGE_UTIL: Data = Data {
     ],
     shared: false,
 };
-
 pub const COMPRESSION_UTILS_PORTABLE: Data = Data {
     lib: "compression_utils_portable",
     sources: &[
@@ -244,7 +241,6 @@ pub const COMPRESSION_UTILS_PORTABLE: Data = Data {
     ],
     shared: false,
 };
-
 pub const EGL: Data = Data {
     lib: "libEGL",
     sources: &[
@@ -318,7 +314,6 @@ pub const EGL: Data = Data {
     ],
     shared: true,
 };
-
 pub const GLESv2: Data = Data {
     lib: "libGLESv2",
     sources: &[
@@ -600,7 +595,6 @@ pub const GLESv2: Data = Data {
     ],
     shared: true,
 };
-
 pub const PREPROCESSOR: Data = Data {
     lib: "preprocessor",
     sources: &[
@@ -652,7 +646,6 @@ pub const PREPROCESSOR: Data = Data {
     ],
     shared: false,
 };
-
 pub const TRANSLATOR: Data = Data {
     lib: "translator",
     sources: &[

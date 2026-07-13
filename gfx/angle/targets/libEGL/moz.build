@@ -157,11 +157,6 @@ USE_LIBS += [
     "libGLESv2",
 ]
 
-DIRS += [
-    "../angle_common",
-    "../libGLESv2",
-]
-
 OS_LIBS += [
     "advapi32",
     "comdlg32",
@@ -211,4 +206,4 @@ OS_LIBS += [
 
 DEFFILE = "../../checkout/src/libEGL/libEGL_autogen.def"
 RCFILE = "../../checkout/src/libEGL/libEGL.rc"
-GeckoSharedLibrary("libEGL", linkage=None)
+GeckoSharedLibrary("libEGL")
