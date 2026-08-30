@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from os import path, listdir
+from os import listdir, path
 
 REPO = path.dirname(__file__)
 ANGLE = path.join(REPO, "gfx", "angle")
@@ -110,26 +110,33 @@ impl Libs {
 
 def no_platform_sources(source):
     # Filter out any accidental inclusion of platform-specific source files.
-    return "system_utils_posix.cpp" not in source and "system_utils_linux.cpp" not in source
+    return (
+        "system_utils_posix.cpp" not in source
+        and "system_utils_linux.cpp" not in source
+    )
 
 
 def write_lib(lib, data, f):
     name = str.encode(lib2const(lib))
     defines = [
-        b"(%s, %s)" % (
-            string_literal(k),
-            b"None" if v is True else b"Some(%s)" % string_literal(v)
-        )
+        b"(%s, %s)"
+        % (string_literal(k), b"None" if v is True else b"Some(%s)" % string_literal(v))
         for k, v in data["DEFINES"].items()
     ]
 
     f.write(b"pub const %s: Data = Data {\n" % name)
     f.write(b"    lib: %s,\n" % string_literal(lib))
-    write_list(b"sources", map(string_literal, filter(no_platform_sources, data["SOURCES"])), f)
+    write_list(
+        b"sources", map(string_literal, filter(no_platform_sources, data["SOURCES"])), f
+    )
     write_list(b"includes", map(string_literal, data["LOCAL_INCLUDES"]), f)
     write_list(b"defines", defines, f)
     write_list(b"os_libs", map(string_literal, data["OS_LIBS"]), f)
-    write_list(b"use_libs", map(lib_enum, filter(lambda s: "zlib" not in s, data["USE_LIBS"])), f)
+    write_list(
+        b"use_libs",
+        map(lib_enum, filter(lambda s: "zlib" not in s, data["USE_LIBS"])),
+        f,
+    )
     if data["SHARED"]:
         f.write(b"    shared: true,\n")
     else:
@@ -144,7 +151,7 @@ def lib_enum(s: str):
 def string_literal(s):
     prelen = 1
     raw = repr(s).replace('"', '\\"')
-    return b"\"%s\"" % raw[prelen:-prelen].encode("utf-8")
+    return b'"%s"' % raw[prelen:-prelen].encode("utf-8")
 
 
 def write_list(name, items, f):
@@ -155,5 +162,5 @@ def write_list(name, items, f):
     f.write(b"    ],\n")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     run()
