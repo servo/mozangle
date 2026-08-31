@@ -59,6 +59,20 @@ jobs:
       - run: apt update && apt install -y libx11-dev
       - run: cargo test --target ${{ matrix.target }}
 
+  integrity:
+    name: Integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+      - name: Update gfx/angle
+        run: |
+          python3 ./update.py
+          git add .
+      - name: Check gfx/angle integrity
+        run: git diff --staged --no-ext-diff --exit-code
+
   build_result:
     name: Result
     runs-on: ubuntu-latest
@@ -66,6 +80,7 @@ jobs:
     needs:
       - "build"
       - "linux-cross-compile"
+      - "integrity"
 
     steps:
       - name: Mark the job as successful
