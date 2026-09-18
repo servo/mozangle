@@ -1,0 +1,40 @@
+name: Security bump
+
+on:
+    workflow_dispatch:
+    schedule:
+        # Runs at 03:30, every Saturday
+        - cron: "30 3 * * 6"
+
+jobs:
+    bump:
+        runs-on: ubuntu-latest
+        # We don't want to run the security bump in forks.
+        if: github.repository == 'servo/mozangle'
+        permissions:
+            contents: write
+            pull-requests: write
+        steps:
+            - uses: actions/checkout@v6
+            - name: Configure Git
+              run: |
+                  git config user.name "github-actions[bot]"
+                  git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            - run: python3 ./security-bump.py
+              id: bump
+            - run: python3 ./update.py
+            - name: Commit changes
+              if: ${{ steps.bump.outputs.tag != '' }}
+              # if there are no changes to the gfx/angle directory we remove all other changes
+              # so there will be no PR created
+              run: |
+                  git add gfx/angle
+                  git --cached diff --exit-code && git reset --hard HEAD || git commit -sam "Bump ANGLE to ${{ steps.bump.outputs.tag }}"
+            - name: Create Pull Request
+              uses: peter-evans/create-pull-request@c0f553fe549906ede9cf27b5156039d195d2ece0
+              with:
+                  title: Security bump ANGLE to ${{ steps.bump.outputs.tag }}
+                  body: |
+                      Bump ANGLE to ${{ steps.bump.outputs.tag }}
+
+                      Close and reopen this PR to trigger CI.
