@@ -24,9 +24,9 @@ jobs:
         os: ["ubuntu-22.04", "macos-latest"]
         cargo-options: ["", '--features "dynamic_lib"']
         include:
-          - os: "windows-latest"
+          - os: "windows-2022"
             cargo-options: '--features "egl"'
-          - os: "windows-latest"
+          - os: "windows-2022"
             cargo-options: '--features "build_dlls"'
     runs-on: ${{ matrix.os }}
     steps:
